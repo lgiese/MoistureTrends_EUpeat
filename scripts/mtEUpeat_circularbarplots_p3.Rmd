@@ -1,0 +1,536 @@
+---
+title: "Moisture trends in European peatlands - Circumpolar barplots"
+author: "Laura Giese"
+date: "8. Jan 2023"
+output:
+  html_document:
+        dev: svglite
+editor_options: 
+  chunk_output_type: console
+---
+
+## Part 3
+### This script shows results of our analysis of NDWI trends (including insignificant trends) in European peatlands as circumpolar barplot.
+
+```{r, eval = T, echo = F, warning = F, message = F}
+#devtools::install_github('renv')
+#install.packages('renv')
+#renv::init()
+#renv::diagnostics()
+#options(vsc.plot = FALSE)
+#setwd('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/')
+#install.packages('httpgd')
+library(httpgd)
+#install.packages('radian')
+
+#library(remotes)
+#install_github("r-spatial/sf")
+library(rgeos)
+library(sp)
+#remotes::install_github("r-spatial/sf")
+library(sf)
+library(stars)
+#install.packages('terra')
+library(terra)
+library(arrow)
+#install.packages(svglite)
+library(tidyverse)
+#install.packages('cowplot')
+library(cowplot)
+#install.packages('libgdal')
+library(tidyr)
+#install.packages('rgdal')
+library(purrr)
+library(plyr)
+library(dplyr)
+
+library(stringr)
+#install.packages('rowr')
+#library(abind)
+library(geojsonsf)
+#install.packages('geojsonio')
+library(geojsonio)
+
+#install.packages('ggplot2')
+library(ggplot2)
+library(ggspatial)
+#install.packages("ggpubr", repos = c("https://cran.rediris.org/", "https://cloud.r-project.org/"))
+library(ggpubr)
+#install.packages('plotly')
+library(gridExtra)
+library(plotly)
+#install.packages('ggnewscale')
+library(ggnewscale)
+
+#devtools::install_github('ropenscilabs/rnaturalearthdata')
+library(rnaturalearth)
+library(rnaturalearthdata)
+library('tidyterra')
+
+
+senSlope <- function(formula, data, subset, na.action, intercept='Ac',
+                     CI=.95) {
+	# Coding History:
+	#    2000Oct27 JRSlack  Original coding as kensen
+	#    2011May02 DLLorenz Conversion to R--as sen slope only
+	#    2011Oct25 DLLorenz Update for package
+	#    2013Apr30 DLLorenz Bug fixes
+	#    2014Dec29 DLLorenz Conversion to roxygen header
+  ##
+  ## Define the variance of Kendall's S function, required for conf. int.
+  vark <- function(y, x) {
+    ties.y <- rle(sort(y))$lengths
+    ties.x <- rle(sort(x))$lengths
+    n <- length(y)
+    t1 <- n * (n - 1) * (2 * n + 5)
+    ty2 <- sum(ties.y * (ties.y - 1) * (2 * ties.y + 5))
+    tx2 <- sum(ties.x * (ties.x - 1) * (2 * ties.x + 5))
+    v <- (t1 - ty2 -tx2)/18
+    v1 <- sum(ties.y * (ties.y - 1)) * sum(ties.x * (ties.x - 1)) /
+      (2 * n * (n - 1))
+    v2 <- sum(ties.y * (ties.y - 1) * (ties.y - 2)) *
+      sum(ties.x * (ties.x - 1) * (ties.x - 2)) /
+        (9 * n * (n - 1) * (n - 2))
+    v <- v + v1 + v2
+    return (v)
+  }
+  ## Process formula as with regular linear regression!
+  call <- match.call()
+  m <- match.call(expand.dots = FALSE)
+  m$intercept <- m$CI <- NULL
+  m$drop.unused.levels <- TRUE
+  m[[1]] <- as.name("model.frame")
+  m <- eval(m, sys.parent())
+  if(ncol(m) != 2L)
+    stop("Must specify a single response and a single explanatory variable in the formula")
+  ## Extract missing value info
+  na.action <- attr(m, "na.action")
+  y <- m[, 1L]
+  yname <- names(m)[1L]
+  x <- m[,2]
+  xname <- names(m)[2L]
+  n <- length(y)
+  if (n < 3L)
+    stop("model data should effectively be longer than 2.")  
+  ## Calculate the statistics
+  ## A fast, efficient way to compute all possible slopes:
+  slopes <- unlist(lapply(seq(along = y), function(i, y, t)
+                                    ((y[i] - y[1L:i]) / (t[i] - t[1L:i])), y, x))
+  slopes <- sort(slopes) # removes missings (due to ties in x)
+  sen.slope <- median(slopes)
+  ## Compute the variance of S, accounting only for ties in x
+  varS <- vark(seq(along=y), x) # Forces no ties in y
+  Calpha <- -qnorm((1-CI)/2) * sqrt(varS)
+  M1 <- as.integer((length(slopes) - Calpha)/2)
+  M2 <- as.integer((length(slopes) + Calpha)/2) + 1
+  sen.CI <- slopes[c(M1, M2)]
+  names(sen.CI) <- paste(c("Lower", "Upper"),
+                         substring(sprintf("%.2f", CI), 2), sep="") # drop 0
+  ## Median of the data values.
+  median.y <- median(y)         
+  ## Median of the time values.
+  median.x <- median(x)
+  
+  ## A line representing the trend of the data then is given by
+  ##
+  ##    y(t) = sen.slope*(t-med.time)+med.data
+  ##
+  ##    This line has the slope of the trend and passes through
+  ##       the point (t=med.time, y=med.data)
+  ## Compute the coefficients for the line: intercept and slope
+  coef <- c(sen.slope*(-median.x)+median.y, sen.slope)
+  fits <- coef[1L] + coef[2L]*x
+  resids <- y - fits
+  if(intercept == 'A1m') {
+    coef[1L] <- coef[1L] + median(resids)
+    resids <- y - coef[1L] - coef[2L]*x
+  }
+  ## Return the statistics.
+  retval <- list(call=call, coefficients=coef, slope.CI=sen.CI, residuals=resids, 
+                 fitted.values=fits, na.action=na.action, x=x, y=y, var.names=c(yname, xname),
+                 model=m)
+  oldClass(retval) <- "senSlope"
+  return(retval)
+}
+```
+
+## Load data and filter significant trends
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+#load data and filter significant trends
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#define input path
+path_trend_points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+#load trend points
+trendstats_filtered_outliers=readRDS(paste0(path_trend_points, 'trendpoints_fwo_filtered_list.rds'))
+
+#filter NDWI trend dataset on count of timestamps per time-series > 10 
+#and p-value <0.05 (95% confidence level) for May-October
+slope_filtered_insig=lapply(seq(5,10), function(i){
+  m=month.name[i]
+  trendstats_insig=as.data.frame(cbind(c(rep(m, nrow(trendstats_filtered_outliers[[i]]))),trendstats_filtered_outliers[[i]]))
+  colnames(trendstats_insig)=c('mon', 'count', 'tau', 'p_val', 'Sint', 'Sslope', 'geom')
+  trendstats_insig_sf=st_as_sf(trendstats_insig, geom=trendstats_insig$geom)
+  return(trendstats_insig_sf)
+})
+
+#combine in one simple feature collection (long format)
+#slope_filtered_insig_bind=do.call(rbind,slope_filtered_insig)
+#slope_filtered_insig_bind$mon=factor(slope_filtered_insig_bind$mon, levels=month.name[5:10])
+
+#categorize trend points in stron/weak negative/positive trends
+
+point_dens_pos=lapply(slope_filtered_insig,function(m){
+  m_df=as.data.frame(m[,2:ncol(m)])
+  m_df_pos3=m_df%>% filter(Sslope > 0.003)
+  m_df_pos3_class=cbind(m_df_pos3, sign=rep('pos3', nrow(m_df_pos3)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos3)))
+  m_df_pos1=m_df%>% filter(Sslope > 0.001) %>% filter(Sslope <= 0.003)
+  m_df_pos1_class=cbind(m_df_pos1, sign=rep('pos1', nrow(m_df_pos1)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos1)))
+  m_df_pos=m_df%>% filter(Sslope > 0) %>% filter(Sslope <= 0.001)
+  m_df_pos_class=cbind(m_df_pos, sign=rep('pos', nrow(m_df_pos)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos)))
+  
+  m_df_neg=m_df%>% filter(Sslope < 0) %>% filter(Sslope >= -0.001)
+  m_df_neg_class=cbind(m_df_neg, sign=rep('neg', nrow(m_df_neg)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg)))
+  m_df_neg1=m_df%>% filter(Sslope < -0.001) %>% filter(Sslope >= -0.003)
+  m_df_neg1_class=cbind(m_df_neg1, sign=rep('neg1', nrow(m_df_neg1)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg1)))
+  m_df_neg3=m_df%>% filter(Sslope < -0.003)
+  m_df_neg3_class=cbind(m_df_neg3, sign=rep('neg3', nrow(m_df_neg3)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg3)))
+  m_df_class=rbind(m_df_pos3_class, m_df_pos1_class, m_df_pos_class, m_df_neg_class, m_df_neg1_class, m_df_neg3_class)
+  colnames(m_df_class)=c(colnames(m_df)[1:c(ncol(m_df)-1)],'geometry', 'sign', 'mon')
+  return(m_df_class)
+})
+m_df_class_all=do.call(rbind,point_dens_pos)
+
+m_df_class_all[,7]=as.factor(m_df_class_all[,7])
+m_df_class_all[,8]=factor(m_df_class_all[,8], levels=month.name[5:10])
+
+# count number of trend points per category
+#freq_out=lapply(point_dens_pos, function(m){table(m$sign) })
+
+```
+
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#Create of Europe
+### ------------------------------------------------------------------------------------------------------------ ###
+##create base map with countries of europe - spatial polygons
+
+#basemap
+world_map <- rnaturalearth::ne_countries(scale = 50, returnclass = 'sf')
+european_union <- c("Austria","Albania","Andorra","Bosnia and Herz.", "Belgium","Bulgaria","Croatia","Cyprus",
+                    "Czech Rep.","Denmark","Estonia","Finland","France",
+                    "Germany","Greece","Hungary","Ireland","Italy","Kosovo","Latvia",
+                    "Lithuania","Luxembourg","Malta","Montenegro", "Netherlands","Poland",
+                    "Portugal","Romania","Slovakia","Slovenia","Spain", "Serbia",
+                    "Sweden","United Kingdom","Norway", "Iceland", "Switzerland", "Czechia", "Macedonia")
+
+european_union_map <- 
+  world_map %>% 
+  filter(name %in% european_union)
+
+bbox_europe <- st_bbox(c(xmin = -30, ymin = 30, xmax = 35, ymax = 70), crs = st_crs(4326))
+
+#european_union_map_proj=st_transform(european_union_map, crs=st_crs(bbox_europe))
+european_union_map_cropped <- st_crop(european_union_map, bbox_europe) 
+
+
+df <- 
+  tibble(country = european_union,
+       some_value = runif(length(european_union)))
+
+map <- 
+  european_union_map_cropped %>% 
+  left_join(df, by = c("name" = "country"))
+
+#colnames(map)
+#nrow(map)
+
+#ggplot()+
+#  geom_sf(data=map, fill = 'white', size =0.2) +
+#  scale_x_continuous(limits = c(-22, 29))+
+#  scale_y_continuous(limits = c(47, 71))+
+#  theme(panel.grid.major = element_blank(), panel.background = element_rect(fill = "#cccccc"), axis.text = element_text(size=20)) #+
+
+```
+```{r, eval = T, echo = T, warnings = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#Create KöppenGeiger Map with climate zones, which included more than 1000 point locations
+### ------------------------------------------------------------------------------------------------------------ ###
+
+
+#count per country / KöppenGeiger
+m_df_class_posneg_all_sf=st_as_sf(m_df_class_all, geom=m_df_class_all$geometry, crs = st_crs(CRS("+init=epsg:4326")))
+#map$name
+#c_names_aoi=c('Germany', 'Poland','Lithuania', 'Latvia', 'Czechia','Finland', 'Netherlands', 'Sweden', 'United Kingdom', 'Ireland', 'Denmark', 'Norway','Estonia', 'Iceland')
+#c_names_aoi=european_union
+
+#KGclim_zones=st_read('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/KoeppGeig/KG_vectorized.gpkg')
+KGclim_rast=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/KoeppGeig/koppen_geiger_tif/1991_2020/koppen_geiger_0p01.tif')
+bbox_europe <- st_bbox(c(xmin = -30, ymin = 30, xmax = 35, ymax = 72), crs = st_crs(4326))
+#european_union_map_proj=st_transform(european_union_map, crs=st_crs(bbox_europe))
+#KGclim_zones_eu <- st_crop(KGclim_zones, bbox_europe) 
+KGclim_rast_eu=terra::crop(KGclim_rast, bbox_europe)
+KGclim_rast_eu_poly=as.polygons(KGclim_rast_eu)
+KGclim_rast_eu_sf=st_as_sf(KGclim_rast_eu_poly)
+
+#KG_clim_valid=st_make_valid(KGclim_rast_eu_sf)
+
+#plot(KGclim_rast_eu_poly)
+#st_write(KGclim_zones_eu,'/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/KoeppGeig/KG_vectorized_eu.gpkg')
+#sf_extSoftVersion()["lwgeom"]
+#KGclim_zones_eu_buff=st_buffer(KGclim_rast_eu_sf[!is.na(KG_clim_valid)], 0.0)
+
+#summary(KGclim_zones_eu)
+
+KGclim_rast_eu_filtered = KGclim_rast_eu %>% filter(koppen_geiger_0p01 %in% c(15, 16, 27, 26, 29))
+#plot(KGclim_rast_eu_filtered)
+
+values(KGclim_rast_eu_filtered)=as.factor(KGclim_rast_eu_filtered[])#, levels=c(15, 16, 27, 26))
+
+#levels(KGclim_rast_eu_filtered_f)
+
+#coltab(KGclim_rast_eu_filtered_f)=c('#333333','#8D8D8D','#ABABAB','#C1C1C1')
+
+#create palettes
+#pal <- colorRampPalette(c('goldenrod3','goldenrod3','goldenrod3',"#f7c973","#f7c973", "#f7bf59", '#ecebeb', 'lightblue', "#209fb6", "#209fb6","#209fb6",'darkblue','darkblue','darkblue'))
+
+#define theme for plots
+myTheme <- theme(legend.text = element_text(size = 10, angle=20), 
+                                  legend.title = element_text(size = 12), 
+                                  strip.text = element_text(size = 12),
+                                  #legend.key.size = unit(2, 'cm'),
+                                  legend.position = 'bottom',
+                                  axis.text=element_text(size=12),
+                                  axis.title = element_blank(),
+                                  panel.grid.major = element_blank(), 
+                                  panel.background = element_rect(fill = "#cccccc"))
+
+
+ggplot() +
+    geom_spatraster(data = KGclim_rast_eu_filtered)+
+    #facet_wrap(~lyr)+
+    theme_light() + ##011108, '#5B9E96'
+    scale_fill_manual(values=c('#86a1ac','#368992','#345551','#08383d', '#cbf5fa'), na.value='#c1c3c7')+#,
+                        #labels = format(c("27","26","16","15"))) +
+    #scale_fill_gradient2(low='goldenrod', mid= 'white', high='darkblue',midpoint= 0,limits= c(-0.00005,0.00005),na.value='#00000000') + #,limits= c(-0.01,0.11)
+    #scale_fill_gradientn(colours=c('white', 'white', 'lightblue', 'cyan3','deepskyblue4', 'darkblue'),na.value='#00000000') + #,limits= c(-0.01,0.11)
+    #scale_colour_gradient(colours = pal(7), limits= c(-0.15,0.15), breaks =c(-0.01,-0.0025,-0.0005,0,0.0005,0.0025,0.025), na.value='#00000000') 
+    geom_sf(data=map, color='black',fill = '#00000000', size=0.05) + #c(data.frame(slope_filtered[[1]][,1])[,1]))
+    coord_sf(xlim = c(-25, 30), ylim = c(47, 71)) +
+    #scale_colour_gradientn(colours = pal(7), limits= c(-0.005,0.005), breaks =c(-0.005,-0.0025,0,0.0025,0.005)) +
+    labs(fill = "KoeppenGeigerClass")+
+    myTheme
+#ggsave(paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/empty_map_KGclass_blueish.svg'), width=10, height=10)
+
+
+```
+```{r, eval = T, echo = T, warnings = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#circular histogram
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#names(table(KGclim_rast_eu_poly$koppen_geiger_0p01))
+
+#c_nam='Estonia'
+#m='May'
+mlist=month.name[5:10] #c(levels(m_df_class_posneg_all_sf$mon))
+c_names_aoi=as.numeric(names(table(KGclim_rast_eu_sf$koppen_geiger_0p01)))
+#map$name
+#c_nam=19
+#plot(country_n)
+
+
+lapply(c_names_aoi, function(c_nam){
+#list_posneg_all_mon_out=lapply(c_names_aoi, function(c_nam){   
+  #country_n=map %>% filter(KG_class==c_nam)
+  country_n=KGclim_rast_eu %>% filter(koppen_geiger_0p01==c_nam)
+
+
+count_country_list=lapply(mlist, function(m){
+  m_df_class_posneg_all_sf_month=m_df_class_posneg_all_sf %>% filter(mon==m)
+
+  #country_n_month=st_filter(m_df_class_posneg_all_sf_month, country_n)
+  pixel_extracted_country_n_month=terra::extract(country_n, m_df_class_posneg_all_sf_month, bind = TRUE)
+#names(pixel_extracted_forest)
+#summary(pixel_extracted_country_n_month$koppen_geiger_0p01)
+country_n_month= pixel_extracted_country_n_month %>% filter(is.na(koppen_geiger_0p01) == FALSE)
+  
+  #country_n_month=st_filter(m_df_class_posneg_all_sf_month, country_n)
+
+  #count_all_sigpoints_country=st_filter(m_df_class_posneg_all_sf_month, country_n)
+  #plot(country_n_month)
+  country_n_month_sf=st_as_sf(country_n_month, geom=country_n_month$geometry)
+  #country_n_month_sf_no_dup= country_n_month_sf %>% distinct(geometry, .keep_all = TRUE)
+  count_country=as.data.frame(t(cbind(c(table(country_n_month_sf$sign), 'KGZ'=c_nam, 'mon'=m))))
+return(count_country)
+
+})
+count_country_list_df=as.data.frame(do.call(rbind.fill,count_country_list))
+#in percent
+if(length(count_country_list_df)>2){
+ges_df=cbind(count_country_list_df)
+neg_col=as.numeric(count_country_list_df$neg)
+neg_col1=as.numeric(count_country_list_df$neg1)
+neg_col3=as.numeric(count_country_list_df$neg3)
+pos_col=as.numeric(count_country_list_df$pos)
+pos_col1=as.numeric(count_country_list_df$pos1)
+pos_col3=as.numeric(count_country_list_df$pos3)
+ges_df=as.data.frame(cbind(neg_col,neg_col1,neg_col3,pos_col,pos_col1,pos_col3))
+gesamtwert=ges_df %>% rowwise() %>% mutate(sum=sum(neg_col,neg_col1,neg_col3,pos_col,pos_col1,pos_col3, na.rm=T))#neg_col+pos_col+neg_col1+neg_col3+pos_col1+pos_col3
+perc_out=lapply(seq(length(gesamtwert$sum)), function(v){
+  percent_neg=(neg_col[v]/gesamtwert$sum[v])*100
+  percent_neg1=(neg_col1[v]/gesamtwert$sum[v])*100
+  percent_neg3=(neg_col3[v]/gesamtwert$sum[v])*100
+  percent_pos=(pos_col[v]/gesamtwert$sum[v])*100
+  percent_pos1=(pos_col1[v]/gesamtwert$sum[v])*100
+  percent_pos3=(pos_col3[v]/gesamtwert$sum[v])*100
+  perc=as.data.frame(cbind('neg'=percent_neg,'neg1'=percent_neg1,'neg3'=percent_neg3,'pos'=percent_pos, 'pos1'=percent_pos1, 'pos3'=percent_pos3))
+  return(perc)
+}
+)
+perc_out_df=do.call(rbind,perc_out)
+perc_out_df_country=as.data.frame(cbind(perc_out_df,count_country_list_df$KGZ,count_country_list_df$mon))
+colnames(perc_out_df_country)=c(colnames(perc_out_df), 'kgz', 'mon')
+
+perc_out_df_country[,8]=factor(perc_out_df_country[,8], levels=c(month.abb[5:10]))
+levels(perc_out_df_country[,8])
+data=perc_out_df_country
+data <- data %>% gather(key = "observation", value="value", c(1:6)) 
+as.numeric(data$value)
+
+# prepare a data frame for base lines
+base_data <- data %>% 
+  group_by(mon) %>% 
+  summarize(start=0, end=6) %>% 
+  rowwise() %>% 
+  mutate(title=mean(c(start, end)))
+
+# prepare a data frame for grid (scales)
+grid_data <- base_data
+grid_data$end <- grid_data$end[ c( nrow(grid_data), 1:nrow(grid_data)-1)] + 1
+grid_data$start <- grid_data$start - 1
+grid_data <- grid_data[-1,]
+#labvec=seq(0,round_any(max(as.numeric(perc_out_df_country$neg)+as.numeric(perc_out_df_country$pos)), 100, f = ceiling), by=c(round_any(max(as.numeric(perc_out_df_country$neg)+as.numeric(perc_out_df_country$pos)), 100, f = ceiling)/4))
+labvec=seq(from=0,to=100, by=25)
+labchar=paste0(as.character(labvec), '%')
+
+#levels(data$observation)
+pal_np=c("#f7bf59","#f7c973", 'goldenrod3','darkblue', "#209fb6",'lightblue')
+pal_np=setNames(pal_np,c('neg','neg1','neg3', 'pos3', 'pos1', 'pos'))
+
+#library(tidyverse)
+ggplot(data) +        
+  # Add the stacked bar
+  geom_bar(aes(x=as.factor(mon), y=as.numeric(value), fill=observation), stat="identity", alpha=0.7) +  
+  ylim(-50,labvec[5]) +
+  #ggplot2::annotate("text", x = rep(3,5), y = c(0, 25, 50, 75, 100), label = c("0", "50", "100", "150", "200") , color="grey", size=6 , angle=0, fontface="bold", hjust=1)+
+  coord_polar(start = 90)+
+  scale_fill_manual(values=pal_np) +
+  #+
+  geom_segment(data=data, aes(x = 5, y = -50, xend = 0, yend = -50), colour = "white", alpha=1, size=0.3 , inherit.aes = FALSE ) +
+  #geom_segment(data=grid_data, aes(x = start, y = -1, xend = end, yend = -1), colour = "black", alpha=0.8, size=0.6 , inherit.aes = FALSE )  +
+  ggplot2::annotate("text", x = rep(0.17,5), y = labvec, label = c(labchar) , color="white", size=10 , angle=45, hjust=0.75, vjust=-0.1, fontface = "bold")+
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),#size=40, color="#25282c", hjust=50
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    #panel.background = element_rect(fill = ('white'), colour='grey'),
+    plot.margin = unit(rep(1,4), "cm"),
+    plot.title  =element_text(size=25)
+  ) +
+  ggtitle(paste0('Koeppen Geiger class: ', as.character(c_nam)))+ 
+  #, hjust=c(1,1,0,0)
+  # Add a val=100/75/50/25 lines. I do it at the beginning to make sur barplots are OVER it.
+  geom_segment(aes(x = 6.5, y = 0, xend = 0, yend = 0), colour = "#7c808a", alpha=1, size=0.5 , inherit.aes = FALSE ) +
+  geom_segment(aes(x = 6.5, y = labvec[2], xend = 0, yend = labvec[2]), colour = "#7c808a", alpha=1, size=0.5 , inherit.aes = FALSE ) +
+  geom_segment(aes(x = 6.5, y = labvec[3], xend = 0, yend = labvec[3]), colour = "#7c808a", alpha=1, size=0.5 , inherit.aes = FALSE ) +
+  geom_segment(aes(x = 6.5, y = labvec[4], xend = 0, yend = labvec[4]), colour = "#7c808a", alpha=1, size=0.5 , inherit.aes = FALSE ) +
+  geom_segment(aes(x = 6.5, y = labvec[5], xend = 0, yend = labvec[5]), colour = "#7c808a", alpha=1, size=0.5 , inherit.aes = FALSE ) +
+  geom_text(data=data, aes(x = 1, y = 15, label=mon[1]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')+
+  geom_text(data=data, aes(x = 2, y = 15, label=mon[2]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')+
+  geom_text(data=data, aes(x = 3, y = 15, label=mon[3]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')+
+  geom_text(data=data, aes(x = 4, y = 15, label=mon[4]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')+
+  geom_text(data=data, aes(x = 5, y = 15, label=mon[5]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')+
+  geom_text(data=data, aes(x = 6, y = 15, label=mon[6]), colour = "white", alpha=0.8, size=10, inherit.aes = FALSE, fontface = 'plain')#+
+  
+  #ggsave(paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/circularbar_posneg_KGc',c_nam,'_perc_outlier_count_filtered_insignificant_incl_annot.svg'), width=10, height=10)
+#return(count_country_list_df)
+
+}
+  # Add text showing the value of each 100/75/50/25 lines
+  #https://r-graph-gallery.com/299-circular-stacked-barplot.html  
+  #ylim(-150,max(label_data$tot, na.rm=T)) +
+  
+  #coord_polar() +
+  
+  # Add labels on top of each bar
+  #geom_text(data=label_data, aes(x=id, y=tot+10, label=individual, hjust=hjust), color="black", fontface="bold",alpha=0.6, size=5, angle= label_data$angle, inherit.aes = FALSE ) +
+  
+  # Add base line information
+  #geom_text(data=base_data, aes(x = title, y = -18, label='lab'), hjust=c(1,1,0,0), colour = "black", alpha=0.8, size=4, fontface="bold", inherit.aes = FALSE)
+
+
+})
+
+
+#y=7
+
+
+
+```
+
+```{r, eval = T, echo = T, warnings = F}
+#lapply(c_names_aoi, function(c_nam){
+list_posneg_all_mon_out=lapply(c_names_aoi, function(c_nam){   
+  #country_n=map %>% filter(KG_class==c_nam)
+  country_n=KGclim_rast_eu %>% filter(koppen_geiger_0p01==c_nam)
+
+
+count_country_list=lapply(mlist, function(m){
+  m_df_class_posneg_all_sf_month=m_df_class_posneg_all_sf %>% filter(mon==m)
+
+  #country_n_month=st_filter(m_df_class_posneg_all_sf_month, country_n)
+  pixel_extracted_country_n_month=terra::extract(country_n, m_df_class_posneg_all_sf_month, bind = TRUE)
+#names(pixel_extracted_forest)
+#summary(pixel_extracted_country_n_month$koppen_geiger_0p01)
+country_n_month= pixel_extracted_country_n_month %>% filter(is.na(koppen_geiger_0p01) == FALSE)
+  
+  #country_n_month=st_filter(m_df_class_posneg_all_sf_month, country_n)
+
+  #count_all_sigpoints_country=st_filter(m_df_class_posneg_all_sf_month, country_n)
+  #plot(country_n_month)
+  country_n_month_sf=st_as_sf(country_n_month, geom=country_n_month$geometry)
+  #country_n_month_sf_no_dup= country_n_month_sf %>% distinct(geometry, .keep_all = TRUE)
+  count_country=as.data.frame(t(cbind(c(table(country_n_month_sf$sign), 'KGZ'=c_nam, 'mon'=m))))
+return(count_country)
+
+})
+if(length(count_country_list_df)>2){
+count_country_list_df=as.data.frame(do.call(rbind.fill,count_country_list))
+return(count_country_list_df)
+
+}
+})
+
+lapply(summary, list_posneg_all_mon_out)
+
+list_posneg_all_mon_out_df=as.data.frame(do.call(rbind,list_posneg_all_mon_out[7:16]))
+list_posneg_all_mon_out_df[,6]=as.numeric(list_posneg_all_mon_out_df[,6])
+#write.csv(list_posneg_all_mon_out_df, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/pos_neg_KGclim_all_outl_count_filtered_insignificant_incl.csv')
+count_all_KG_clim=list_posneg_all_mon_out_df %>% rowwise() %>% mutate(sum=sum(neg, neg1, neg3, pos, pos1, pos3, na.rm=T))
+count_all_KG_clim$sum-count_all_KG_clim
+
+
+sapply(seq(1,54,6),function(y){
+ m=mean(count_all_KG_clim$sum[y:c(y+5)])
+ kg=count_all_KG_clim$KGZ[y]
+ return(cbind(m,kg))
+})
+```

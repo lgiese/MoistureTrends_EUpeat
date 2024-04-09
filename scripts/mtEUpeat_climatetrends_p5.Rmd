@@ -1,0 +1,452 @@
+---
+title: "Moisture trends in European peatlands - Climate analysis"
+author: "Laura Giese"
+date: "8. Jan 2023"
+output:
+  html_document:
+        dev: svglite
+editor_options: 
+  chunk_output_type: console
+---
+
+## Part 5
+### This script shows results of our analysis of NDWI trends (insignificant trends) and congruency with ERA5 climate trend patterns.
+
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#calculate Sen's Slope for ERA5 climate data
+### ------------------------------------------------------------------------------------------------------------ ###
+
+library(terra)
+VSM_rast=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/PuT/data.nc')
+#VSM_rast=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/VolSoilM1/adaptor.mars.internal-1673885669.7525396-9137-4-dd3ba83a-781d-4190-ae6b-0d2a504ba73b.nc')
+#xy <- xyFromCell(VSM_rast, 1:ncell(VSM_rast))
+plot(VSM_rast[[1]])
+time(VSM_rast)
+names(VSM_rast)
+#temperature
+era5_var=VSM_rast[[1:492]]
+#precipitation
+era5_var=VSM_rast[[493:984]]
+time(era5_var)
+plot(era5_var)
+#generate variable for monthly filtering
+patterns=c(sapply(str_pad(seq(12), 2, pad = "0"), function(s){paste0('-',s,'-01')}))
+patterns=c(patterns[6],patterns[7],patterns[8],patterns[12])
+#p=patterns[5]
+#ce=2
+p=patterns[1]
+years_ts=(seq(1982, 2022))
+r=1
+r=era5_mon[1,1,]
+time(era5_mon)
+slope_fun=function(r){
+  senSlope <- function(formula, data, subset, na.action, intercept='Ac',
+                     CI=.95) {
+	# Coding History:
+	#    2000Oct27 JRSlack  Original coding as kensen
+	#    2011May02 DLLorenz Conversion to R--as sen slope only
+	#    2011Oct25 DLLorenz Update for package
+	#    2013Apr30 DLLorenz Bug fixes
+	#    2014Dec29 DLLorenz Conversion to roxygen header
+  ##
+  ## Define the variance of Kendall's S function, required for conf. int.
+  vark <- function(y, x) {
+    ties.y <- rle(sort(y))$lengths
+    ties.x <- rle(sort(x))$lengths
+    n <- length(y)
+    t1 <- n * (n - 1) * (2 * n + 5)
+    ty2 <- sum(ties.y * (ties.y - 1) * (2 * ties.y + 5))
+    tx2 <- sum(ties.x * (ties.x - 1) * (2 * ties.x + 5))
+    v <- (t1 - ty2 -tx2)/18
+    v1 <- sum(ties.y * (ties.y - 1)) * sum(ties.x * (ties.x - 1)) /
+      (2 * n * (n - 1))
+    v2 <- sum(ties.y * (ties.y - 1) * (ties.y - 2)) *
+      sum(ties.x * (ties.x - 1) * (ties.x - 2)) /
+        (9 * n * (n - 1) * (n - 2))
+    v <- v + v1 + v2
+    return (v)
+  }
+  ## Process formula as with regular linear regression!
+  call <- match.call()
+  m <- match.call(expand.dots = FALSE)
+  m$intercept <- m$CI <- NULL
+  m$drop.unused.levels <- TRUE
+  m[[1]] <- as.name("model.frame")
+  m <- eval(m, sys.parent())
+  if(ncol(m) != 2L)
+    stop("Must specify a single response and a single explanatory variable in the formula")
+  ## Extract missing value info
+  na.action <- attr(m, "na.action")
+  y <- m[, 1L]
+  yname <- names(m)[1L]
+  x <- m[,2]
+  xname <- names(m)[2L]
+  n <- length(y)
+  if (n < 3L)
+    stop("model data should effectively be longer than 2.")  
+  ## Calculate the statistics
+  ## A fast, efficient way to compute all possible slopes:
+  slopes <- unlist(lapply(seq(along = y), function(i, y, t)
+                                    ((y[i] - y[1L:i]) / (t[i] - t[1L:i])), y, x))
+  slopes <- sort(slopes) # removes missings (due to ties in x)
+  sen.slope <- median(slopes)
+  ## Compute the variance of S, accounting only for ties in x
+  varS <- vark(seq(along=y), x) # Forces no ties in y
+  Calpha <- -qnorm((1-CI)/2) * sqrt(varS)
+  M1 <- as.integer((length(slopes) - Calpha)/2)
+  M2 <- as.integer((length(slopes) + Calpha)/2) + 1
+  sen.CI <- slopes[c(M1, M2)]
+  names(sen.CI) <- paste(c("Lower", "Upper"),
+                         substring(sprintf("%.2f", CI), 2), sep="") # drop 0
+  ## Median of the data values.
+  median.y <- median(y)         
+  ## Median of the time values.
+  median.x <- median(x)
+  
+  ## A line representing the trend of the data then is given by
+  ##
+  ##    y(t) = sen.slope*(t-med.time)+med.data
+  ##
+  ##    This line has the slope of the trend and passes through
+  ##       the point (t=med.time, y=med.data)
+  ## Compute the coefficients for the line: intercept and slope
+  coef <- c(sen.slope*(-median.x)+median.y, sen.slope)
+  fits <- coef[1L] + coef[2L]*x
+  resids <- y - fits
+  if(intercept == 'A1m') {
+    coef[1L] <- coef[1L] + median(resids)
+    resids <- y - coef[1L] - coef[2L]*x
+  }
+  ## Return the statistics.
+  retval <- list(call=call, coefficients=coef, slope.CI=sen.CI, residuals=resids, 
+                 fitted.values=fits, na.action=na.action, x=x, y=y, var.names=c(yname, xname),
+                 model=m)
+  oldClass(retval) <- "senSlope"
+  return(retval)
+  }
+
+  ts_cell=as.data.frame(r)
+  df_ts_cell=data.frame(cbind('year'=c(seq(1982, 2022)),ts_cell))
+  #print(df_ts_cell)
+  if(length(which(is.na(df_ts_cell[,2])))<40){
+    Sslope_vsm_USGS=senSlope(df_ts_cell[,2] ~ df_ts_cell[,1], data=df_ts_cell, na.action = na.exclude)
+  return(Sslope_vsm_USGS$coefficients[2])
+  }else{
+      return(NA)
+  }
+  }
+
+#app() function, use multiple cores
+era5_trend_tif_list=lapply(patterns, function(p){
+  era5_mon=era5_var[[grep(pattern=p,time(era5_var))]]
+test_app_out=terra::app(era5_mon,slope_fun, cores =4)
+terra::writeRaster(test_app_out, paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/PuT/era5_trend_tp_m_',substr(p, start=2, stop=3),'.tif'))
+return(test_app_out)
+
+})
+
+plot(test_app_out)
+
+#takes too long:
+era5_trend_tif_list=lapply(patterns, function(p){
+  era5_mon=era5_var[[grep(pattern=p,time(era5_var))]]
+  #plot(era5_mon)
+  ts_cell=as.data.frame(t(era5_mon[1:ncell(era5_mon)]))
+  df_ts_cell=data.frame(cbind('year'=c(seq(1982, 2022)),ts_cell))
+  #df_ts_cell[,1:5]
+  #head(df_ts_cell_precip)
+  #summary(df_ts_cell)
+  
+  vsm_sens_USGS=sapply(seq(2,length(df_ts_cell)), function(ce){
+    if(length(which(is.na(df_ts_cell[,ce])))<40){
+      Sslope_vsm_USGS=senSlope(df_ts_cell[,ce] ~ df_ts_cell[,1], data=df_ts_cell, na.action = na.exclude)  
+      return(Sslope_vsm_USGS$coefficients[2])
+    }else{
+      return(NA)
+      print(ce)
+    }  
+  })
+  #vsm_sens_USGS_df=as.data.frame(vsm_sens_USGS)
+  x_sens <- rast(ncol=ncol(era5_mon), nrow=nrow(era5_mon), xmin=xmin(era5_mon), xmax=xmax(era5_mon), ymin=ymin(era5_mon), ymax=ymax(era5_mon), res=res(era5_mon))
+  #x_sens <- rast(ncol=4, nrow=4, xmin=0, xmax=4, ymin=0, ymax=4, res=1)
+  crs(x_sens) = crs(era5_mon)
+  values(x_sens) = vsm_sens_USGS
+  terra::writeRaster(x_sens, paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/PuT/era5_trend_t2m_K_',substr(p, start=2, stop=3),'.tif'))
+  return(x_sens)
+
+})
+
+
+
+#data check
+summary(vsm_sens_USGS)
+vsm_sens_USGS[1:20]
+x_sens <- rast(ncol=ncol(era5_mon), nrow=nrow(era5_mon), xmin=xmin(era5_mon), xmax=xmax(era5_mon), ymin=ymin(era5_mon), ymax=ymax(era5_mon), res=res(era5_mon))
+crs(x_sens) = crs(era5_mon)
+values(x_sens) = vsm_sens_USGS
+plot(x_sens)
+df_ts_cell[,2]
+plot(vsm_sens_USGS)
+length(vsm_sens_USGS)
+x_sens_stars=st_as_stars(x_sens)
+
+#precipitation - monthly mean - example:march
+
+#caluclate summer & winter mean
+list_season=c(patterns[6],patterns[7],patterns[8])
+season_list_r=lapply(list_season, function(p){terra::rast(paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/PuT/era5_trend_tp_m_',substr(p, start=2, stop=3),'.tif'))})
+season_r=rast(season_list_r)
+e=ext(-25, 34, 46, 72)
+season_r_cr=crop(season_r, e)
+
+season_r_mean=app(season_r_cr, mean)
+#season_r_mean=mean(season_r, na.rm=T)
+#names(season_r_mean)=c('Summer (JJA mean)')
+season_r_mean_s=season_r_mean
+names(season_r_mean_s)=c('Summer (JJA mean)')
+season_r_mean_spt=season_r_mean
+names(season_r_mean_stemp)=c('Summer (JJA mean)')
+
+ggplot() +  
+  #coord_sf(xlim = c(-30, 33), ylim = c(37, 73))+
+  geom_spatraster(data=season_r_mean_stemp)
+writeRaster(season_r_mean_stemp, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/Temperature/raster_ERA5/meanJJA_temp.tif')
+
+names(season_r_mean)=c('Winter (DJF mean)')
+season_r_mean_w=season_r_mean
+
+season_r_mean_ws=c(season_r_mean_w,season_r_mean_s)
+
+hist(season_r)
+plot(season_r_mean)
+library(viridis)
+## Loading required package: viridisLite
+library(ggthemes)
+z2 = st_set_dimensions(precip_r, 3, values = as.character(st_get_dimension_values(precip_r, 3)))
+ggplot() +  
+  geom_stars(data = z2[1], alpha = 0.8) + 
+  #facet_wrap("time") +#length(df_ts_cell_precip)+
+  scale_fill_viridis() +
+  coord_equal() +
+  theme_map() +
+  theme(legend.position = "right") +
+  labs(fill = "Tot_Precip")
+  #theme(legend.key.width = unit(2, "cm"))
+
+#bands(precip_r)
+pdf(file = paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/Snow/plots/EU_snow_ERA5_Sslope_all.pdf'),   
+    width = 10, # The width of the plot in inches
+    height = 10)
+#--------------- plot??
+pal <- colorRampPalette(c('goldenrod3', "orange", 'grey', 'lightblue', "blue", 'darkblue'))
+summary(season_r_mean_ws)
+season_r_mean_ws[[2]]
+season_r_mean_ws_mm=season_r_mean_ws*1000
+
+ggplot() +
+    geom_spatraster(data = season_r_mean_ws)+
+    facet_wrap(~lyr)+
+    theme_light() +
+    scale_fill_gradient2(low='goldenrod', mid= 'white', high='darkblue',midpoint= 0,limits= c(-0.00005,0.00005),na.value='#00000000') + #,limits= c(-0.01,0.11)
+    #scale_fill_gradientn(colours=c('white', 'white', 'lightblue', 'cyan3','deepskyblue4', 'darkblue'),na.value='#00000000') + #,limits= c(-0.01,0.11)
+    #scale_colour_gradient(colours = pal(7), limits= c(-0.15,0.15), breaks =c(-0.01,-0.0025,-0.0005,0,0.0005,0.0025,0.025), na.value='#00000000') 
+    geom_sf(data=map, color='black',fill = '#00000000', size=0.05) + #c(data.frame(slope_filtered[[1]][,1])[,1]))
+    coord_sf(xlim = c(-25, 30), ylim = c(47, 71)) +
+    #scale_colour_gradientn(colours = pal(7), limits= c(-0.005,0.005), breaks =c(-0.005,-0.0025,0,0.0025,0.005)) +
+    labs(colour = "Tot. Precipitation [m]")+
+    myTheme
+
+pal_p=colorRampPalette(c('#fa8c0f', '#f6f876', 'white','blue', 'darkblue'))
+pal_sn=colorRampPalette(c('darkred', 'red', 'white','blue', 'darkblue'))
+pal_t= colorRampPalette(c('blue', 'darkblue','white','#ffd000','#ff5100'))
+
+ggplot() +  
+  #coord_sf(xlim = c(-30, 33), ylim = c(37, 73))+
+  geom_spatraster(data=season_r_mean_ws_mm) +   
+  geom_sf(data = map, color = "grey30", fill = NA, size=0.5) +
+  facet_wrap(~lyr, ncol=2) +
+  coord_sf(xlim = c(-25, 30), ylim = c(47, 70))+
+  #scale_fill_whitebox_c(
+  #  palette = pal3(7),
+  #  labels = c(-0.005,-0.0035,-0.002, -0.001,0,0.001, 0.002, 0.0035,0.005)
+  #)
+  myTheme+ theme(panel.grid.major = element_blank(), panel.background = element_rect(fill = "#aca4a4", colour = 'grey'))+
+  #scale_x_discrete(expand=c(0,0))+
+  #scale_y_discrete(expand=c(0,0)) 
+  # snow: scale_fill_stepsn(colours = pal_sn(7), limits= c(-0.012,0.012), breaks =c(-0.005, -0.0025, -0.001, -0.0005, -0.00005, 0, 0.00005, 0.0005,0.001, 0.0025, 0.005), na.value = "transparent") + 
+  #scale_fill_gradientn(colours = pal_p(7), limits= c(-0.00018,0.00018), breaks =c(-0.00015, -0.0001, -0.00005, 0, 0.00005, 0.0001, 0.00015), na.value = "transparent") + 
+  #scale_fill_gradientn(colours=c('white', 'white', 'lemonchiffon1','lightgoldenrod1', 'darkgoldenrod1','tan2', 'chocolate2'),limits= c(-0.002,0.11),na.value='#00000000') + #
+
+  scale_fill_gradient2(low='goldenrod', mid= 'white', high='darkblue',midpoint= 0, limits= c(-0.06,0.06), breaks =c(-0.05, -0.025, 0, 0.025, 0.05), na.value = "transparent") + 
+
+  #scale_fill_gradientn(colours = pal_t(7), limits= c(-0.22,0.22), breaks =c(-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15), na.value = "transparent") + 
+  labs(fill = "Tot. Precipitation Change [mm]/yr")
+  #labs(fill = "Temperature Change [K]/yr")
+
+ggsave(file = '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/PuT/EU_tp_m_ERA5_SWmean.png',  device='png', 
+    width = 14, # The width of the plot in inches
+    height = 10)
+
+```
+
+```{r, eval = T, echo = F}
+###--------------------------------###
+### congruence with climate data
+###--------------------------------###
+#based on significant trends
+
+#save mean summer points significant overlap
+st_write(summer_months_mean_cbind_sf, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/significant_trends_summer_months_mean_SslopeNDWI.gpkg')
+summer_months_mean_cbind_sf_sigX=summer_months_mean_cbind_sf
+summary(summer_months_mean_allmon_cbind_sf)
+#spatial visualization of locations with matching trend direction climate vs NDWI trends
+summary(summer_months_mean_cbind_sf)
+mean(c(0.041,0.041,0.051))
+
+summary(summer_months_mean_cbind_sf_sigX)
+summary(season_r_mean_stemp)
+plot(season_r_mean_stemp)
+season_r_mean_p
+#extract clim trend at point location
+trendpoints_pixel_extracted_clim=terra::extract(season_r_mean_spt, summer_months_mean_cbind_sf, bind = TRUE)
+summary(trendpoints_pixel_extracted_clim)
+summary(trendpoints_pixel_extracted_clim_sf)
+trendpoints_pixel_extracted_clim_sf=st_as_sf(trendpoints_pixel_extracted_clim)
+
+p=5
+match_var_all=lapply(seq(nrow(trendpoints_pixel_extracted_clim)), function(p){
+  if(isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,1])[1] > 0) & isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,2])[1]>0)){
+    match_var = 'pos'
+  }else if(isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,1])[1]<0) & isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,2])[1]<0)){
+    match_var = 'neg'
+  }else{
+    match_var = 'none'
+  }
+  return(match_var)
+})
+
+match_var_all=lapply(seq(nrow(trendpoints_pixel_extracted_clim_sf)), function(p){
+  if(isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,1])[1] > 0) & isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,2])[1]<0.05)){
+    match_var = 'pos'
+  }else if(isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,1])[1]<0) & isTRUE(as.numeric(trendpoints_pixel_extracted_clim_sf[p,2])[1]>0.05)){
+    match_var = 'neg'
+  }else{
+    match_var = 'none'
+  }
+  return(match_var)
+})
+match_var_all_bind=as.data.frame(do.call(rbind,match_var_all))
+trendpoints_pixel_extracted_clim_matched=cbind(trendpoints_pixel_extracted_clim_sf,match_var_all_bind)
+colnames(trendpoints_pixel_extracted_clim_matched)=c('Sslope_NDWI','Sslope_climNS', 'matched', 'geometry')
+trendpoints_pixel_extracted_clim_matched_t=trendpoints_pixel_extracted_clim_matched
+trendpoints_pixel_extracted_clim_matched_p=trendpoints_pixel_extracted_clim_matched
+
+
+matched_neg = trendpoints_pixel_extracted_clim_matched %>% filter(matched == 'neg')
+matched_pos = trendpoints_pixel_extracted_clim_matched %>% filter(matched == 'pos')
+matched_none = trendpoints_pixel_extracted_clim_matched %>% filter(matched == 'none')
+
+plot(matched_neg)
+summary(matched_pos)
+
+#temperature
+st_write(trendpoints_pixel_extracted_clim_matched, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/SslopePrecip_SslopeNDWI_match.gpkg')
+
+#precip
+st_write(trendpoints_pixel_extracted_clim_matched_t, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/SslopeTemp_thresh03_SslopeNDWI_match.gpkg')
+#trendpoints_pixel_extracted_clim_matched_p=trendpoints_pixel_extracted_clim_matched
+#trendpoints_pixel_extracted_clim_matched_t=trendpoints_pixel_extracted_clim_matched
+
+trendpoints_pixel_extracted_clim_matched_na_rem_t = as.data.frame(trendpoints_pixel_extracted_clim_matched_t)[complete.cases(as.data.frame(trendpoints_pixel_extracted_clim_matched_t)[,1:3]),]
+trendpoints_pixel_extracted_clim_matched_na_rem_p = as.data.frame(trendpoints_pixel_extracted_clim_matched_p)[complete.cases(as.data.frame(trendpoints_pixel_extracted_clim_matched_p)[,1:3]),]
+
+
+####
+colnames(trendpoints_pixel_extracted_clim_matched_na_rem_t)=c(colnames(trendpoints_pixel_extracted_clim_matched_na_rem_t)[1:2], 'matched_Temp', 'geometry') 
+colnames(trendpoints_pixel_extracted_clim_matched_na_rem_p)=c('Sslope_NDWI','Sslope_climPrec', 'matched_Prec', 'geometry') 
+tot_lm_ndwiclim=cbind(trendpoints_pixel_extracted_clim_matched_na_rem_t,trendpoints_pixel_extracted_clim_matched_na_rem_p[,2:3])
+colnames(tot_lm_ndwiclim)
+
+colnames(tot_lm_ndwiclim_res)=c('Sslope_NDWI','Sslope_climTemp', 'matched_Temp', 'resid_temp', 'Sslope_climPrec', 'matched_Prec', 'resid_Prec', 'geometry', 'geom')
+tot_lm_ndwiclim_sf=st_as_sf(tot_lm_ndwiclim, geom = tot_lm_ndwiclim$geometry)
+
+#plot residuals
+matched_neg_t = tot_lm_ndwiclim_res %>% filter(matched_Temp == 'neg')
+matched_pos_t = tot_lm_ndwiclim_res %>% filter(matched_Temp == 'pos')
+matched_none_t = tot_lm_ndwiclim_res %>% filter(matched_Temp == 'none')
+st_write(tot_lm_ndwiclim_sf, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/stats_clim_trend_conruence.gpkg')
+r=5
+tot_lm_ndwiclim_res[r,1]
+pos_neg_congr=lapply(seq(nrow(tot_lm_ndwiclim_sf)), function(r){
+  if(as.numeric(tot_lm_ndwiclim_sf$Sslope_NDWI[r])[1]>0){
+    congr_prec=paste0(tot_lm_ndwiclim_sf$matched_Prec[r],'_pos')
+    congr_temp=paste0(tot_lm_ndwiclim_sf$matched_Temp[r],'_pos')
+    return(c(congr_prec,congr_temp))
+  }else if(as.numeric(tot_lm_ndwiclim_sf$Sslope_NDWI[r])[1]<0){
+    congr_prec=paste0(tot_lm_ndwiclim_sf$matched_Prec[r],'_neg')
+    congr_temp=paste0(tot_lm_ndwiclim_sf$matched_Temp[r],'_neg')
+    return(c(congr_prec,congr_temp))
+  }else{
+    return(c(NA,NA))
+  }
+})
+congr_vec_bind=do.call(rbind,pos_neg_congr)
+tot_lm_ndwiclim_pn=cbind(tot_lm_ndwiclim_sf,congr_vec_bind)
+tot_lm_ndwiclim_pn=tot_lm_ndwiclim_pn[,-9]
+colnames(tot_lm_ndwiclim_pn)=c(colnames(tot_lm_ndwiclim_pn)[1:5], 'congr_p', 'congr_t', 'geometry')
+summary(tot_lm_ndwiclim_pn_clean)
+pal_error=colorRampPalette(rev(c('#ff3000','#fe7f00','#fe7f00','#fe7f00','#fe7f00', "#ffcb64", '#f8e1b3','#f8e1b3','#f8e1b3','#ffcb64', '#fe7f00', '#fe7f00','#fe7f00','#fe7f00','#ff3000')))
+pal_error=scale_colour_manual(values=c("goldenrod3", "#752404","#209fb6", "#3e1558"))
+
+#tot_lm_ndwiclim_pn_clean=tot_lm_ndwiclim_pn[-which(is.na(tot_lm_ndwiclim_pn[,6])),]
+pos_filtered=tot_lm_ndwiclim_pn %>% filter(Sslope_NDWI>0)
+neg_filtered=tot_lm_ndwiclim_pn %>% filter(Sslope_NDWI<0)
+
+neg_filtered_true = pos_filtered %>% filter(congr_p == 'none_neg')
+table(pos_filtered$congr_t)
+summary(neg_filtered)
+neg_filtered[which(neg_filtered$congr_t=='none_pos'),]
+
+ ggplot() + myTheme +    
+    geom_sf(data=map,  color='black' ,fill = 'white', lwd=0.5) + 
+    #geom_sf(data =plot_sf, aes(colour=plot_sf[[1]]), size =3) + #c(data.frame(slope_filtered[[1]][,1])[,1]))
+    geom_sf(data=pos_filtered, aes(colour=pos_filtered$congr_t), size =0.8) +
+    #geom_sf(data =plot_sf, fill = 'white', col='black') +
+    coord_sf(xlim = c(-22, 29), ylim = c(42, 71))+
+    #scale_colour_stepsn(colours = pal_error(7), limits= c(-0.02,0.02), breaks =c(-0.02,-0.01,-0.001,0,0.001,0.01,0.02)) +
+    scale_colour_manual(values=c("hotpink4","#209fb6"))+ 
+    labs(colour = "Residuals")
+
+ggsave('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/new_mean_summer_NDWItemp_pos_congr.svg',
+width = 10, height = 10)
+
+
+#
+summary(match_var_all_bind)
+complete.cases(match_var_all_bind)
+colnames(trendpoints_pixel_extracted_clim_matched_na_rem_t)=c(colnames(trendpoints_pixel_extracted_clim_matched_na_rem_t)[1:2],'matched_Temp', 'geometry')
+#matched_temp=
+colnames(tot_lm_ndwiclim_res)
+tot_lm_ndwiclim_res=tot_lm_ndwiclim_res_sf[,-9]
+tot_lm_ndwiclim_res=tot_lm_ndwiclim_res[,-3]
+tot_lm_ndwiclim_res=cbind(tot_lm_ndwiclim_res, trendpoints_pixel_extracted_clim_matched_na_rem_t[,3])
+colnames(tot_lm_ndwiclim_res)=c(colnames(tot_lm_ndwiclim_res)[1:6],'matched_Temp', 'geometry')
+
+### pie charts mean summer, mean all month
+summer_mean_pos_count=summer_months_mean_allmon_cbind_sf %>% filter(V1>0)
+summer_mean_neg_count=summer_months_mean_allmon_cbind_sf %>% filter(V1<0)
+nrow(summer_months_mean_cbind_sf)
+summer_months_mean_allmon_cbind_sf
+
+pdf(file='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/pie_mean_allmonth_NDWI_pos_neg.pdf')
+
+pie(c(4589,615), labels = c('positive', 'negative'), col=c("#209fb6","goldenrod3"))+ 
+  theme(labels.text= element_text(size = 50))
+dev.off()
+ggsave('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/pie_mean_summer_NDWI_pos_neg.svg',
+width = 10, height = 10)
+
+
+```

@@ -1,0 +1,437 @@
+---
+title: "Moisture trends in European peatlands - Results: Significant trends"
+author: "Laura Giese"
+date: "8. Jan 2023"
+output:
+  html_document:
+        dev: svglite
+editor_options: 
+  chunk_output_type: console
+---
+
+## Part 2
+### This script shows results of our analysis of NDWI trend in European peatlands.
+
+```{r, eval = T, echo = F, warning = F, message = F}
+#devtools::install_github('renv')
+#install.packages('renv')
+#renv::init()
+#renv::diagnostics()
+#options(vsc.plot = FALSE)
+#setwd('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/')
+#install.packages('httpgd')
+library(httpgd)
+#install.packages('radian')
+
+#library(remotes)
+#install_github("r-spatial/sf")
+library(rgeos)
+library(sp)
+#remotes::install_github("r-spatial/sf")
+library(sf)
+library(stars)
+#install.packages('terra')
+library(terra)
+library(arrow)
+#install.packages(svglite)
+library(tidyverse)
+#install.packages('cowplot')
+library(cowplot)
+#install.packages('libgdal')
+library(tidyr)
+#install.packages('rgdal')
+library(purrr)
+library(plyr)
+library(dplyr)
+
+library(stringr)
+#install.packages('rowr')
+#library(abind)
+library(geojsonsf)
+#install.packages('geojsonio')
+library(geojsonio)
+
+#install.packages('ggplot2')
+library(ggplot2)
+library(ggspatial)
+#install.packages("ggpubr", repos = c("https://cran.rediris.org/", "https://cloud.r-project.org/"))
+library(ggpubr)
+#install.packages('plotly')
+library(gridExtra)
+library(plotly)
+#install.packages('ggnewscale')
+library(ggnewscale)
+
+#devtools::install_github('ropenscilabs/rnaturalearthdata')
+library(rnaturalearth)
+library(rnaturalearthdata)
+library('tidyterra')
+
+
+senSlope <- function(formula, data, subset, na.action, intercept='Ac',
+                     CI=.95) {
+	# Coding History:
+	#    2000Oct27 JRSlack  Original coding as kensen
+	#    2011May02 DLLorenz Conversion to R--as sen slope only
+	#    2011Oct25 DLLorenz Update for package
+	#    2013Apr30 DLLorenz Bug fixes
+	#    2014Dec29 DLLorenz Conversion to roxygen header
+  ##
+  ## Define the variance of Kendall's S function, required for conf. int.
+  vark <- function(y, x) {
+    ties.y <- rle(sort(y))$lengths
+    ties.x <- rle(sort(x))$lengths
+    n <- length(y)
+    t1 <- n * (n - 1) * (2 * n + 5)
+    ty2 <- sum(ties.y * (ties.y - 1) * (2 * ties.y + 5))
+    tx2 <- sum(ties.x * (ties.x - 1) * (2 * ties.x + 5))
+    v <- (t1 - ty2 -tx2)/18
+    v1 <- sum(ties.y * (ties.y - 1)) * sum(ties.x * (ties.x - 1)) /
+      (2 * n * (n - 1))
+    v2 <- sum(ties.y * (ties.y - 1) * (ties.y - 2)) *
+      sum(ties.x * (ties.x - 1) * (ties.x - 2)) /
+        (9 * n * (n - 1) * (n - 2))
+    v <- v + v1 + v2
+    return (v)
+  }
+  ## Process formula as with regular linear regression!
+  call <- match.call()
+  m <- match.call(expand.dots = FALSE)
+  m$intercept <- m$CI <- NULL
+  m$drop.unused.levels <- TRUE
+  m[[1]] <- as.name("model.frame")
+  m <- eval(m, sys.parent())
+  if(ncol(m) != 2L)
+    stop("Must specify a single response and a single explanatory variable in the formula")
+  ## Extract missing value info
+  na.action <- attr(m, "na.action")
+  y <- m[, 1L]
+  yname <- names(m)[1L]
+  x <- m[,2]
+  xname <- names(m)[2L]
+  n <- length(y)
+  if (n < 3L)
+    stop("model data should effectively be longer than 2.")  
+  ## Calculate the statistics
+  ## A fast, efficient way to compute all possible slopes:
+  slopes <- unlist(lapply(seq(along = y), function(i, y, t)
+                                    ((y[i] - y[1L:i]) / (t[i] - t[1L:i])), y, x))
+  slopes <- sort(slopes) # removes missings (due to ties in x)
+  sen.slope <- median(slopes)
+  ## Compute the variance of S, accounting only for ties in x
+  varS <- vark(seq(along=y), x) # Forces no ties in y
+  Calpha <- -qnorm((1-CI)/2) * sqrt(varS)
+  M1 <- as.integer((length(slopes) - Calpha)/2)
+  M2 <- as.integer((length(slopes) + Calpha)/2) + 1
+  sen.CI <- slopes[c(M1, M2)]
+  names(sen.CI) <- paste(c("Lower", "Upper"),
+                         substring(sprintf("%.2f", CI), 2), sep="") # drop 0
+  ## Median of the data values.
+  median.y <- median(y)         
+  ## Median of the time values.
+  median.x <- median(x)
+  
+  ## A line representing the trend of the data then is given by
+  ##
+  ##    y(t) = sen.slope*(t-med.time)+med.data
+  ##
+  ##    This line has the slope of the trend and passes through
+  ##       the point (t=med.time, y=med.data)
+  ## Compute the coefficients for the line: intercept and slope
+  coef <- c(sen.slope*(-median.x)+median.y, sen.slope)
+  fits <- coef[1L] + coef[2L]*x
+  resids <- y - fits
+  if(intercept == 'A1m') {
+    coef[1L] <- coef[1L] + median(resids)
+    resids <- y - coef[1L] - coef[2L]*x
+  }
+  ## Return the statistics.
+  retval <- list(call=call, coefficients=coef, slope.CI=sen.CI, residuals=resids, 
+                 fitted.values=fits, na.action=na.action, x=x, y=y, var.names=c(yname, xname),
+                 model=m)
+  oldClass(retval) <- "senSlope"
+  return(retval)
+}
+```
+
+## Load data and filter significant trends
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+#load data and filter significant trends
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#define input path
+path_trend_points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+#load trend points
+trendstats_filtered_outliers=readRDS(paste0(path_trend_points, 'trendpoints_fwo_filtered_list.rds'))
+
+#filter NDWI trend dataset on count of timestamps per time-series > 10 
+#and p-value <0.05 (95% confidence level) for May-October
+slope_filtered_sig=lapply(seq(5,10), function(i){
+  m=month.name[i]
+  points_filtered= trendstats_filtered_outliers[[i]] %>% filter(.[[1]] > 10) %>% filter(.[[3]]<= 0.05)
+  trendstats_sig=as.data.frame(cbind(c(rep(m, nrow(points_filtered))),points_filtered))
+  colnames(trendstats_sig)=c('mon', 'count', 'tau', 'p_val', 'Sint', 'Sslope', 'geom')
+  trendstats_sig_sf=st_as_sf(trendstats_sig, geom=trendstats_sig$geom)
+  return(trendstats_sig_sf)
+})
+
+#combine in one simple feature collection (long format)
+slope_filtered_sig_bind=do.call(rbind,slope_filtered_sig)
+slope_filtered_sig_bind$mon=factor(slope_filtered_sig_bind$mon, levels=month.name[5:10])
+
+
+```
+
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#Create figure 1 - significant trends
+### ------------------------------------------------------------------------------------------------------------ ###
+##create base map with countries of europe - spatial polygons
+
+#basemap
+world_map <- rnaturalearth::ne_countries(scale = 50, returnclass = 'sf')
+european_union <- c("Austria","Albania","Andorra","Bosnia and Herz.", "Belgium","Bulgaria","Croatia","Cyprus",
+                    "Czech Rep.","Denmark","Estonia","Finland","France",
+                    "Germany","Greece","Hungary","Ireland","Italy","Kosovo","Latvia",
+                    "Lithuania","Luxembourg","Malta","Montenegro", "Netherlands","Poland",
+                    "Portugal","Romania","Slovakia","Slovenia","Spain", "Serbia",
+                    "Sweden","United Kingdom","Norway", "Iceland", "Switzerland", "Czechia", "Macedonia")
+
+european_union_map <- 
+  world_map %>% 
+  filter(name %in% european_union)
+
+bbox_europe <- st_bbox(c(xmin = -30, ymin = 30, xmax = 35, ymax = 70), crs = st_crs(4326))
+
+#european_union_map_proj=st_transform(european_union_map, crs=st_crs(bbox_europe))
+european_union_map_cropped <- st_crop(european_union_map, bbox_europe) 
+
+
+df <- 
+  tibble(country = european_union,
+       some_value = runif(length(european_union)))
+
+map <- 
+  european_union_map_cropped %>% 
+  left_join(df, by = c("name" = "country"))
+
+#colnames(map)
+#nrow(map)
+
+#ggplot()+
+#  geom_sf(data=map, fill = 'white', size =0.2) +
+#  scale_x_continuous(limits = c(-22, 29))+
+#  scale_y_continuous(limits = c(47, 71))+
+#  theme(panel.grid.major = element_blank(), panel.background = element_rect(fill = "#cccccc"), axis.text = element_text(size=20)) #+
+
+```
+
+## Significant trends
+
+```{r, eval = T, echo = T}
+#create palettes
+pal <- colorRampPalette(c('goldenrod3','goldenrod3','goldenrod3',"#f7c973","#f7c973", "#f7bf59", '#ecebeb', 'lightblue', "#209fb6", "#209fb6","#209fb6",'darkblue','darkblue','darkblue'))
+
+#define theme for plots
+myTheme <- theme(legend.text = element_text(size = 10, angle=20), 
+                                  legend.title = element_text(size = 12), 
+                                  strip.text = element_text(size = 12),
+                                  #legend.key.size = unit(2, 'cm'),
+                                  legend.position = 'bottom',
+                                  axis.text=element_text(size=12),
+                                  axis.title = element_blank(),
+                                  panel.grid.major = element_blank(), 
+                                  panel.background = element_rect(fill = "#cccccc"))
+
+#create a vector for iteratively filtering to column names including a specific month name
+#month_vec=tolower(month.abb)
+
+#plot significant trends
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =slope_filtered_sig_bind, aes(colour=slope_filtered_sig_bind$Sslope), size = .1) + 
+    facet_wrap(~mon)+
+    coord_sf(xlim = c(-22, 29), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006)) + 
+    labs(colour = "SensSlope")+
+    myTheme
+```
+
+## Pie charts of positive & negative counts of trend points for each monthly (May-October)
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+# pie charts
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#categorize trend points in stron/weak negative/positive trends
+
+point_dens_pos=lapply(slope_filtered_sig,function(m){
+  m_df=as.data.frame(m[,2:ncol(m)])
+  m_df_pos3=m_df%>% filter(Sslope > 0.003)
+  m_df_pos3_class=cbind(m_df_pos3, sign=rep('pos3', nrow(m_df_pos3)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos3)))
+  m_df_pos1=m_df%>% filter(Sslope > 0.001) %>% filter(Sslope <= 0.003)
+  m_df_pos1_class=cbind(m_df_pos1, sign=rep('pos1', nrow(m_df_pos1)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos1)))
+  m_df_pos=m_df%>% filter(Sslope > 0) %>% filter(Sslope <= 0.001)
+  m_df_pos_class=cbind(m_df_pos, sign=rep('pos', nrow(m_df_pos)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_pos)))
+  
+  m_df_neg=m_df%>% filter(Sslope < 0) %>% filter(Sslope >= -0.001)
+  m_df_neg_class=cbind(m_df_neg, sign=rep('neg', nrow(m_df_neg)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg)))
+  m_df_neg1=m_df%>% filter(Sslope < -0.001) %>% filter(Sslope >= -0.003)
+  m_df_neg1_class=cbind(m_df_neg1, sign=rep('neg1', nrow(m_df_neg1)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg1)))
+  m_df_neg3=m_df%>% filter(Sslope < -0.003)
+  m_df_neg3_class=cbind(m_df_neg3, sign=rep('neg3', nrow(m_df_neg3)), mon=rep(str_to_title(m[1,1]$mon), nrow(m_df_neg3)))
+  m_df_class=rbind(m_df_pos3_class, m_df_pos1_class, m_df_pos_class, m_df_neg_class, m_df_neg1_class, m_df_neg3_class)
+  colnames(m_df_class)=c(colnames(m_df)[1:c(ncol(m_df)-1)],'geometry', 'sign', 'mon')
+  return(m_df_class)
+})
+m_df_class_all=do.call(rbind,point_dens_pos)
+
+m_df_class_all[,7]=as.factor(m_df_class_all[,7])
+m_df_class_all[,8]=factor(m_df_class_all[,8], levels=month.name[5:10])
+
+# count number of trend points per category
+freq_out=lapply(point_dens_pos, function(m){table(m$sign) })
+
+#create pie charts
+lapply(freq_out, function(m){
+  pie(c(sum(m[4:6]),sum(m[1:3])), labels = c('positive', 'negative'), col=c("#209fb6","goldenrod3"))+ 
+  theme(labels.text= element_text(size = 50))
+})
+
+```
+
+## Calculate mean trend of summer months mean
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+##calculate mean trend of summer months mean 
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#extract common coordinates (Jun-Aug) for points with significant trends
+equal_points67=slope_filtered_sig[[2]][which(st_geometry(slope_filtered_sig[[2]]) %in% st_geometry(slope_filtered_sig[[3]])),]
+equal_points672=equal_points67[which(st_geometry(equal_points67) %in% st_geometry(slope_filtered_sig[[4]])),]
+
+
+Sslope_jun_common=slope_filtered_sig[[2]][which(st_geometry(slope_filtered_sig[[2]]) %in% st_geometry(equal_points672)),]
+Sslope_jul_common=slope_filtered_sig[[3]][which(st_geometry(slope_filtered_sig[[3]]) %in% st_geometry(equal_points672)),]
+Sslope_aug_common=slope_filtered_sig[[4]][which(st_geometry(slope_filtered_sig[[4]]) %in% st_geometry(equal_points672)),]
+summer_months_bind=cbind(Sslope_jul_common,Sslope_jun_common,Sslope_aug_common)
+
+summer_months_bind_df=as.data.frame(cbind(as.data.frame(summer_months_bind[,6])[,1], as.data.frame(summer_months_bind[,12])[,1], as.data.frame(summer_months_bind[,18])))
+colnames(summer_months_bind_df)=c('Jun','Jul','Aug','geometry')
+
+
+summer_months_bind_df[,1]=as.numeric(summer_months_bind_df[,1])
+summer_months_bind_df[,2]=as.numeric(summer_months_bind_df[,2])
+summer_months_bind_df[,3]=as.numeric(summer_months_bind_df[,3])
+
+#calculate mean
+summer_months_mean = lapply(seq(1,nrow(summer_months_bind_df)), function(r){
+  mean_ft=mean(c(summer_months_bind_df$Jul[r],summer_months_bind_df$Jun[r],summer_months_bind_df$Aug[r]), na.rm=T)
+  return(mean_ft)
+  })
+summer_months_mean_bind=as.data.frame(do.call(rbind,summer_months_mean)) 
+summer_months_mean_cbind=cbind(summer_months_mean_bind, summer_months_bind_df[,4])
+summer_months_mean_cbind_df=as.data.frame(summer_months_mean_cbind)
+summer_months_mean_cbind_sf=st_as_sf(summer_months_mean_cbind_df, geom=summer_months_mean_cbind_df$geometry)
+
+summer_months_mean_cbind_sf=summer_months_mean_cbind_sf[,-2]
+
+#plot equal points summer months
+summer_months_mean_cbind_sf$V1=as.numeric(summer_months_mean_cbind_sf$V1)
+
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =summer_months_mean_cbind_sf, aes(colour=summer_months_mean_cbind_sf$V1), size = .1) + 
+    #facet_wrap(~Month)+
+    coord_sf(xlim = c(-30, 33), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006))+
+    labs(colour = "SensSlope") +
+    myTheme
+
+```
+
+## Calculate mean trend of overall mean
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+##calculate mean trend of overall mean 
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#extract common coordinates (May-Oct) for points with significant trends
+equal_points6721=equal_points672[which(st_geometry(equal_points672) %in% st_geometry(slope_filtered_sig[[1]])),]
+equal_points67215=equal_points6721[which(st_geometry(equal_points6721) %in% st_geometry(slope_filtered_sig[[5]])),]
+equal_points672156=equal_points67215[which(st_geometry(equal_points67215) %in% st_geometry(slope_filtered_sig[[6]])),]
+
+Sslope_jun_common=slope_filtered_sig[[2]][which(st_geometry(slope_filtered_sig[[2]]) %in% st_geometry(equal_points672156)),]
+Sslope_jul_common=slope_filtered_sig[[3]][which(st_geometry(slope_filtered_sig[[3]]) %in% st_geometry(equal_points672156)),]
+Sslope_aug_common=slope_filtered_sig[[4]][which(st_geometry(slope_filtered_sig[[4]]) %in% st_geometry(equal_points672156)),]
+Sslope_may_common=slope_filtered_sig[[1]][which(st_geometry(slope_filtered_sig[[1]]) %in% st_geometry(equal_points672156)),]
+Sslope_sep_common=slope_filtered_sig[[5]][which(st_geometry(slope_filtered_sig[[5]]) %in% st_geometry(equal_points672156)),]
+Sslope_oct_common=slope_filtered_sig[[6]][which(st_geometry(slope_filtered_sig[[6]]) %in% st_geometry(equal_points672156)),]
+
+summer_months_bind_allmon=cbind(Sslope_may_common, Sslope_jun_common,Sslope_jul_common,Sslope_aug_common, Sslope_sep_common, Sslope_oct_common)
+
+summer_months_bind_allmon=as.data.frame(cbind(as.data.frame(summer_months_bind_allmon[,6])[,1], as.data.frame(summer_months_bind_allmon[,12])[,1], as.data.frame(summer_months_bind_allmon[,18])[,1],
+                                    as.data.frame(summer_months_bind_allmon[,24])[,1],as.data.frame(summer_months_bind_allmon[,30])[,1],as.data.frame(summer_months_bind_allmon[,36])))
+colnames(summer_months_bind_allmon)=c('May','Jun','Jul','Aug','Sep', 'Oct','geometry')
+
+summer_months_bind_allmon[,1]=as.numeric(summer_months_bind_allmon[,1])
+summer_months_bind_allmon[,2]=as.numeric(summer_months_bind_allmon[,2])
+summer_months_bind_allmon[,3]=as.numeric(summer_months_bind_allmon[,3])
+summer_months_bind_allmon[,4]=as.numeric(summer_months_bind_allmon[,4])
+summer_months_bind_allmon[,5]=as.numeric(summer_months_bind_allmon[,5])
+summer_months_bind_allmon[,6]=as.numeric(summer_months_bind_allmon[,6])
+
+#calculate mean
+summer_months_mean_allmon = lapply(seq(1,nrow(summer_months_bind_allmon)), function(r){
+  mean_ft=mean(c(summer_months_bind_allmon$May[r],summer_months_bind_allmon$Jul[r],summer_months_bind_allmon$Jun[r],summer_months_bind_allmon$Aug[r],summer_months_bind_allmon$Sep[r],summer_months_bind_allmon$Oct[r]), na.rm=T)
+  return(mean_ft)
+  })
+summer_months_mean_allmon_bind=as.data.frame(do.call(rbind,summer_months_mean_allmon)) 
+summer_months_mean_allmon_cbind=cbind(summer_months_mean_allmon_bind, summer_months_bind_allmon[,7])
+summer_months_mean_allmon_cbind_df=as.data.frame(summer_months_mean_allmon_cbind)
+summer_months_mean_allmon_cbind_sf=st_as_sf(summer_months_mean_allmon_cbind_df, geom=summer_months_mean_allmon_cbind_df$geometry)
+
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =summer_months_mean_allmon_cbind_sf, aes(colour=summer_months_mean_allmon_cbind_sf$V1), size = .1) + 
+    #facet_wrap(~Month)+
+    coord_sf(xlim = c(-30, 33), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006))+
+    labs(colour = "SensSlope")+
+    myTheme
+
+```
+
+## Plot pie charts of summer months and overall mean 
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+##plot pie charts of summer months and overall mean 
+### ------------------------------------------------------------------------------------------------------------ ###
+#######
+### pie charts mean summer
+summer_mean_pos_count=summer_months_mean_cbind_sf %>% filter(V1>0)
+summer_mean_neg_count=summer_months_mean_cbind_sf %>% filter(V1<0)
+
+pie(c(nrow(summer_mean_pos_count),nrow(summer_mean_neg_count)), labels = c('positive', 'negative'), col=c("#209fb6","goldenrod3"))+ 
+  theme(labels.text= element_text(size = 50))
+
+### pie charts mean all month
+allmon_mean_pos_count=summer_months_mean_allmon_cbind_sf %>% filter(V1>0)
+allmon_mean_neg_count=summer_months_mean_allmon_cbind_sf %>% filter(V1<0)
+
+pie(c(nrow(allmon_mean_pos_count),nrow(allmon_mean_neg_count)), labels = c('positive', 'negative'), col=c("#209fb6","goldenrod3"))+ 
+  theme(labels.text= element_text(size = 50))
+
+### ------------------------------------------------------------------------------------------------------------ ###
+
+```
+
+

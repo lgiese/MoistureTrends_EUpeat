@@ -1,0 +1,376 @@
+---
+title: "Moisture trends in European peatlands - Plots for statistical Infromation (Supplementary)"
+author: "Laura Giese"
+date: "8. Jan 2023"
+output:
+  html_document:
+        dev: svglite
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+```{r setup-chunk}
+#knitr::opts_chunk$set(dev = "svg")
+```
+
+## Part 1
+### This script provides supplementary statistical information on the NDWI dataset, which constitutes the base for our NDWI trend analysis.
+
+```{r, eval = T, echo = F, warning = F, message = F}
+
+#This script provides supplementary statistical information on the NDWI dataset, which constitutes the base for 
+#our NDWI trend analysis.
+
+
+### ------------------------------------------------------------------------------------------------------------ ###
+#load libraries
+### ------------------------------------------------------------------------------------------------------------ ###
+#capabilities()
+#sessionInfo()
+#devtools::install_github('renv')
+#install.packages('renv')
+#renv::init()
+#renv::diagnostics()
+#options(vsc.plot = FALSE)
+#setwd('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/')
+#install.packages('httpgd')
+library(httpgd)
+#install.packages('radian')
+#install.packages("languageserver")
+#install.packages("stringi")
+#library('stringr')
+#library(remotes)
+#install_github("r-spatial/sf")
+library(rgeos)
+library(sp)
+#remotes::install_github("r-spatial/sf")
+library(sf)
+library(stars)
+#install.packages('terra')
+library(terra)
+library(arrow)
+#install.packages(svglite)
+library(svglite)
+#dev = "svglite"
+#install.packages('Cairo')
+#library(Cairo)
+#install.packages('tinytex')
+
+library(tinytex)
+#tlmgr_update()   
+
+library(tidyverse)
+#install.packages('cowplot')
+library(cowplot)
+#install.packages('libgdal')
+library(tidyr)
+#install.packages('rgdal')
+library(purrr)
+library(plyr)
+library(dplyr)
+
+library(stringr)
+#install.packages('rowr')
+#library(abind)
+library(geojsonsf)
+#install.packages('geojsonio')
+library(geojsonio)
+
+#install.packages('ggplot2')
+library(ggplot2)
+library(ggspatial)
+#install.packages("ggpubr", repos = c("https://cran.rediris.org/", "https://cloud.r-project.org/"))
+library(ggpubr)
+#install.packages('plotly')
+library(gridExtra)
+library(plotly)
+#install.packages('ggnewscale')
+library(ggnewscale)
+
+#devtools::install_github('ropenscilabs/rnaturalearthdata')
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(tidyterra)
+
+
+
+#Function to calculate Sen's Slope (USGS)
+senSlope <- function(formula, data, subset, na.action, intercept='Ac',
+                     CI=.95) {
+	# Coding History:
+	#    2000Oct27 JRSlack  Original coding as kensen
+	#    2011May02 DLLorenz Conversion to R--as sen slope only
+	#    2011Oct25 DLLorenz Update for package
+	#    2013Apr30 DLLorenz Bug fixes
+	#    2014Dec29 DLLorenz Conversion to roxygen header
+  ##
+  ## Define the variance of Kendall's S function, required for conf. int.
+  vark <- function(y, x) {
+    ties.y <- rle(sort(y))$lengths
+    ties.x <- rle(sort(x))$lengths
+    n <- length(y)
+    t1 <- n * (n - 1) * (2 * n + 5)
+    ty2 <- sum(ties.y * (ties.y - 1) * (2 * ties.y + 5))
+    tx2 <- sum(ties.x * (ties.x - 1) * (2 * ties.x + 5))
+    v <- (t1 - ty2 -tx2)/18
+    v1 <- sum(ties.y * (ties.y - 1)) * sum(ties.x * (ties.x - 1)) /
+      (2 * n * (n - 1))
+    v2 <- sum(ties.y * (ties.y - 1) * (ties.y - 2)) *
+      sum(ties.x * (ties.x - 1) * (ties.x - 2)) /
+        (9 * n * (n - 1) * (n - 2))
+    v <- v + v1 + v2
+    return (v)
+  }
+  ## Process formula as with regular linear regression!
+  call <- match.call()
+  m <- match.call(expand.dots = FALSE)
+  m$intercept <- m$CI <- NULL
+  m$drop.unused.levels <- TRUE
+  m[[1]] <- as.name("model.frame")
+  m <- eval(m, sys.parent())
+  if(ncol(m) != 2L)
+    stop("Must specify a single response and a single explanatory variable in the formula")
+  ## Extract missing value info
+  na.action <- attr(m, "na.action")
+  y <- m[, 1L]
+  yname <- names(m)[1L]
+  x <- m[,2]
+  xname <- names(m)[2L]
+  n <- length(y)
+  if (n < 3L)
+    stop("model data should effectively be longer than 2.")  
+  ## Calculate the statistics
+  ## A fast, efficient way to compute all possible slopes:
+  slopes <- unlist(lapply(seq(along = y), function(i, y, t)
+                                    ((y[i] - y[1L:i]) / (t[i] - t[1L:i])), y, x))
+  slopes <- sort(slopes) # removes missings (due to ties in x)
+  sen.slope <- median(slopes)
+  ## Compute the variance of S, accounting only for ties in x
+  varS <- vark(seq(along=y), x) # Forces no ties in y
+  Calpha <- -qnorm((1-CI)/2) * sqrt(varS)
+  M1 <- as.integer((length(slopes) - Calpha)/2)
+  M2 <- as.integer((length(slopes) + Calpha)/2) + 1
+  sen.CI <- slopes[c(M1, M2)]
+  names(sen.CI) <- paste(c("Lower", "Upper"),
+                         substring(sprintf("%.2f", CI), 2), sep="") # drop 0
+  ## Median of the data values.
+  median.y <- median(y)         
+  ## Median of the time values.
+  median.x <- median(x)
+  
+  ## A line representing the trend of the data then is given by
+  ##
+  ##    y(t) = sen.slope*(t-med.time)+med.data
+  ##
+  ##    This line has the slope of the trend and passes through
+  ##       the point (t=med.time, y=med.data)
+  ## Compute the coefficients for the line: intercept and slope
+  coef <- c(sen.slope*(-median.x)+median.y, sen.slope)
+  fits <- coef[1L] + coef[2L]*x
+  resids <- y - fits
+  if(intercept == 'A1m') {
+    coef[1L] <- coef[1L] + median(resids)
+    resids <- y - coef[1L] - coef[2L]*x
+  }
+  ## Return the statistics.
+  retval <- list(call=call, coefficients=coef, slope.CI=sen.CI, residuals=resids, 
+                 fitted.values=fits, na.action=na.action, x=x, y=y, var.names=c(yname, xname),
+                 model=m)
+  oldClass(retval) <- "senSlope"
+  return(retval)
+}
+```
+
+```{r, eval = T, echo = F}
+
+#define input path
+path_trend_points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+#load NDWI statistics
+NDWIstats_filtered=readRDS(paste0(path_trend_points, 'NDWIstats_fwo_filtered_list.rds'))
+#statistical summary of NDWI statistics including locations with insignificant trend
+lapply(NDWIstats_filtered, summary)
+
+#load trend points
+trendstats_filtered_outliers=readRDS(paste0(path_trend_points, 'trendpoints_fwo_filtered_list.rds'))
+
+#statistical summary of trend statistics including locations with insignificant trend
+lapply(trendstats_filtered_outliers, summary)
+
+
+```
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+#Plots - Supplementary statistical information on dataset
+### ------------------------------------------------------------------------------------------------------------ ###
+##create base map with countries of europe - spatial polygons
+
+#basemap
+world_map <- rnaturalearth::ne_countries(scale = 50, returnclass = 'sf')
+european_union <- c("Austria","Albania","Andorra","Bosnia and Herz.", "Belgium","Bulgaria","Croatia","Cyprus",
+                    "Czech Rep.","Denmark","Estonia","Finland","France",
+                    "Germany","Greece","Hungary","Ireland","Italy","Kosovo","Latvia",
+                    "Lithuania","Luxembourg","Malta","Montenegro", "Netherlands","Poland",
+                    "Portugal","Romania","Slovakia","Slovenia","Spain", "Serbia",
+                    "Sweden","United Kingdom","Norway", "Iceland", "Switzerland", "Czechia", "Macedonia")
+
+european_union_map <- 
+  world_map %>% 
+  filter(name %in% european_union)
+
+bbox_europe <- st_bbox(c(xmin = -30, ymin = 30, xmax = 35, ymax = 70), crs = st_crs(4326))
+
+#european_union_map_proj=st_transform(european_union_map, crs=st_crs(bbox_europe))
+european_union_map_cropped <- st_crop(european_union_map, bbox_europe) 
+
+
+df <- 
+  tibble(country = european_union,
+       some_value = runif(length(european_union)))
+
+map <- 
+  european_union_map_cropped %>% 
+  left_join(df, by = c("name" = "country"))
+
+#colnames(map)
+#nrow(map)
+
+#ggplot()+
+#  geom_sf(data=map, fill = 'white', size =0.2) +
+#  scale_x_continuous(limits = c(-22, 29))+
+#  scale_y_continuous(limits = c(47, 71))+
+#  theme(panel.grid.major = element_blank(), panel.background = element_rect(fill = "#cccccc"), axis.text = element_text(size=20)) #+
+
+
+#create palettes
+pal <- colorRampPalette(c('goldenrod3','goldenrod3','goldenrod3',"#f7c973","#f7c973", "#f7bf59", '#ecebeb', 'lightblue', "#209fb6", "#209fb6","#209fb6",'darkblue','darkblue','darkblue'))
+pal_count <- colorRampPalette(c('#A9A9A9','#A9A9A9','#A9A9A9',"#5F9EA0","#5F9EA0", "#5F9EA0", '#20B2AA', '#6A5ACD', "#8B008B", "#8B008B","#8B008B",'#4B0082','#4B0082','#4B0082'))
+
+#define theme for plots
+myTheme <- theme(legend.text = element_text(size = 10, angle=20), 
+                                  legend.title = element_text(size = 12), 
+                                  strip.text = element_text(size = 12),
+                                  #legend.key.size = unit(2, 'cm'),
+                                  legend.position = 'bottom',
+                                  axis.text=element_text(size=12),
+                                  axis.title = element_blank(),
+                                  panel.grid.major = element_blank(), 
+                                  panel.background = element_rect(fill = "#cccccc"))
+
+#create a vector for iteratively filtering to column names including a specific month name
+#month_vec=tolower(month.abb)
+
+### ------------------------------------------------------------------------------------------------------------ ###
+##plot trends including insignificant trends but filtered on count
+
+#filter NDWI trend dataset on count of timestamps per time-series > 10 for May-October
+slope_filtered_count=lapply(seq(5,10), function(i){
+  m=month.name[i]
+  points_filtered= trendstats_filtered_outliers[[i]] %>% filter(.[[1]] > 10)
+  trendstats_count=as.data.frame(cbind(c(rep(m, nrow(points_filtered))),points_filtered))
+  colnames(trendstats_count)=c('mon', 'count', 'tau', 'p_val', 'Sint', 'Sslope', 'geom')
+  trendstats_count_sf=st_as_sf(trendstats_count, geom=trendstats_count$geom)
+  return(trendstats_count_sf)
+})
+
+#combine in one simple feature collection (long format)
+points_filtered_count_bind=do.call(rbind,slope_filtered_count)
+points_filtered_count_bind$mon=factor(points_filtered_count_bind$mon, levels=month.name[5:10])
+
+#plot
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =points_filtered_count_bind, aes(colour=points_filtered_count_bind$Sslope), size = .05) + #c(data.frame(slope_filtered[[1]][,1])[,1]))
+    facet_wrap(~mon)+
+    coord_sf(xlim = c(-22, 29), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006)) + #Sens Slope: limits= c(-0.015,0.015), breaks =c(-0.01,-0.005,-0.0025,0,0.0025,0.005,0.01))limits= c(-1,1), breaks =c(-0.5,-0.25,-0.1,0,0.1,0.25,0.5)
+    labs(colour = "Sens Slope [NDWI/yr]")+
+    myTheme
+
+```
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+#filter NDWI trend dataset on count of timestamps per time-series > 10 
+#and p-value <0.05 (95% confidence level) for all month
+
+slope_filtered=lapply(seq(1,12), function(i){
+  points_filtered= trendstats_filtered_outliers[[i]] %>% filter(.[[1]] > 10) %>% filter(.[[3]]<= 0.05)
+  return(points_filtered)
+})
+#show summary for significant trends
+lapply(slope_filtered, summary)
+
+#filter NDWI statistics on locations with significant trends
+stats_filtered=lapply(seq(5,10), function(i){
+  stats_filtered_i=NDWIstats_filtered[[i]] %>% filter(geom %in% slope_filtered[[i]]$geom)
+  return(stats_filtered_i)
+})
+#show summary of NDWI statistics for locations with significant trends
+lapply(stats_filtered, summary)
+
+#combine NDWI statistic of locations with significant trends for May-October 
+#in one simple feature collection (long format)
+stats_filtered_bind=do.call(rbind, stats_filtered)
+stats_filtered_bind$mon=factor(stats_filtered_bind$mon, levels=tolower(month.abb)[5:10])
+
+###plot mean NDWI for summer months only for locations with significant trends
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =stats_filtered_bind, aes(colour=stats_filtered_bind$mean), size = .01) + 
+    facet_wrap(~mon)+
+    coord_sf(xlim = c(-22, 29), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-1,1), breaks =c(-1,-0.3,-0.1,0,0.1,0.3,1)) + 
+    labs(colour = "Mean NDWI")+
+    myTheme
+
+#ggsave(file = paste0(paste0(path_trend_points, 'mean_NDWI_all_ov_smallP.svg')), 
+#    width = 10, # The width of the plot in inches
+#    height = 14)
+```
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+##plot Kendall's Tau and count only for significant trends
+
+#filter NDWI trend dataset on count and significance for May-October
+slope_filtered_sig=lapply(seq(5,10), function(i){
+  m=month.name[i]
+  points_filtered= trendstats_filtered_outliers[[i]] %>% filter(.[[1]] > 10) %>% filter(.[[3]]<= 0.05)
+  trendstats_sig=as.data.frame(cbind(c(rep(m, nrow(points_filtered))),points_filtered))
+  colnames(trendstats_sig)=c('mon', 'count', 'tau', 'p_val', 'Sint', 'Sslope', 'geom')
+  trendstats_sig_sf=st_as_sf(trendstats_sig, geom=trendstats_sig$geom)
+  return(trendstats_sig_sf)
+})
+
+#combine in one simple feature collection (long format)
+slope_filtered_sig_bind=do.call(rbind,slope_filtered_sig)
+slope_filtered_sig_bind$mon=factor(slope_filtered_sig_bind$mon, levels=month.name[5:10])
+
+#plot Kendall's tau
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =slope_filtered_sig_bind, aes(colour=slope_filtered_sig_bind$tau), size = .1) + 
+    facet_wrap(~mon)+
+    coord_sf(xlim = c(-22, 29), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal(7), limits= c(-0.8,0.8), breaks =c(-0.8,-0.4,-0.1,0,0.1,0.4,0.8)) + 
+    labs(colour = "KendallsTau")+
+    myTheme
+```
+
+```{r, eval = T, echo = T}
+### ------------------------------------------------------------------------------------------------------------ ###
+#plot count of timestamps for locations with time-series showing significant trends
+ggplot() +
+    geom_sf(data=map, color='darkgrey',fill = 'white', size=0.05) + 
+    geom_sf(data =slope_filtered_sig_bind, aes(colour=slope_filtered_sig_bind$count), size = .1) + 
+    facet_wrap(~mon)+
+    coord_sf(xlim = c(-22, 29), ylim = c(47, 71)) +
+    scale_colour_stepsn(colours = pal_count(7), limits= c(11,40), breaks =c(10,15,20,25,30,35,40)) + 
+    labs(colour = "Count") +
+    myTheme
+
+```

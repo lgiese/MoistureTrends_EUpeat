@@ -1,0 +1,559 @@
+---
+title: "Analysis European trends"
+author: "Laura Giese"
+date: "8. Jan 2023"
+output:
+  rmarkdown::html_document:
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+In this script we conduct multiple data preparation steps before and after using the Google Earth Engine (GEE), 
+where we run the trend analysis.
+The final output of this script is the filtered trend point dataset, which is then used in additional R-scripts
+to generate the figures in the manuscript.
+
+Before GEE:
+
+1. Filter Corine Land Cover dataset by class 'peatbogs' 
+2. Create Point sample (geojson) as input for GEE
+
+After GEE:
+
+1. Convert csv files exported from GEE to point shapes (gpkg)
+2. Filtering p1: We removed point locations  
+- which are covered by forest
+- which are covered by open water
+from NDWI statistics dataset and trend statistic dataset, respectively.
+3. Filtering p2: We removed point locations
+- at which NDWI values out of the predefined NDWI value range (-1 to 1) were included in the time-series 
+(= outliers)
+from our analysis.
+
+- input: 
+    CorineLandCover2018.shp
+    Download files: NDWIstatistics.csv
+    Download files: NDWItrends.csv
+    water_mask.tif
+    forest_mask.tif
+- output:
+    NDWItrends_filtered.gpkg
+    NDWIstatistics_filtered.gpkg
+
+```{r}
+#devtools::install_github('renv')
+#install.packages('renv')
+#renv::init()
+#renv::diagnostics()
+options(vsc.plot = FALSE)
+#setwd('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/')
+#install.packages('httpgd')
+library(httpgd)
+#install.packages('radian')
+
+#library(remotes)
+#install_github("r-spatial/sf")
+library(rgeos)
+library(sp)
+#remotes::install_github("r-spatial/sf")
+library(sf)
+library(stars)
+#install.packages('terra')
+library(terra)
+library(arrow)
+#install.packages(svglite)
+library(tidyverse)
+#install.packages('cowplot')
+library(cowplot)
+#install.packages('libgdal')
+library(tidyr)
+#install.packages('rgdal')
+library(purrr)
+library(plyr)
+library(dplyr)
+
+library(stringr)
+#install.packages('rowr')
+#library(abind)
+library(geojsonsf)
+#install.packages('geojsonio')
+library(geojsonio)
+
+#install.packages('ggplot2')
+library(ggplot2)
+library(ggspatial)
+#install.packages("ggpubr", repos = c("https://cran.rediris.org/", "https://cloud.r-project.org/"))
+library(ggpubr)
+#install.packages('plotly')
+library(gridExtra)
+library(plotly)
+#install.packages('ggnewscale')
+library(ggnewscale)
+
+#devtools::install_github('ropenscilabs/rnaturalearthdata')
+library(rnaturalearth)
+library(rnaturalearthdata)
+library('tidyterra')
+
+
+senSlope <- function(formula, data, subset, na.action, intercept='Ac',
+                     CI=.95) {
+	# Coding History:
+	#    2000Oct27 JRSlack  Original coding as kensen
+	#    2011May02 DLLorenz Conversion to R--as sen slope only
+	#    2011Oct25 DLLorenz Update for package
+	#    2013Apr30 DLLorenz Bug fixes
+	#    2014Dec29 DLLorenz Conversion to roxygen header
+  ##
+  ## Define the variance of Kendall's S function, required for conf. int.
+  vark <- function(y, x) {
+    ties.y <- rle(sort(y))$lengths
+    ties.x <- rle(sort(x))$lengths
+    n <- length(y)
+    t1 <- n * (n - 1) * (2 * n + 5)
+    ty2 <- sum(ties.y * (ties.y - 1) * (2 * ties.y + 5))
+    tx2 <- sum(ties.x * (ties.x - 1) * (2 * ties.x + 5))
+    v <- (t1 - ty2 -tx2)/18
+    v1 <- sum(ties.y * (ties.y - 1)) * sum(ties.x * (ties.x - 1)) /
+      (2 * n * (n - 1))
+    v2 <- sum(ties.y * (ties.y - 1) * (ties.y - 2)) *
+      sum(ties.x * (ties.x - 1) * (ties.x - 2)) /
+        (9 * n * (n - 1) * (n - 2))
+    v <- v + v1 + v2
+    return (v)
+  }
+  ## Process formula as with regular linear regression!
+  call <- match.call()
+  m <- match.call(expand.dots = FALSE)
+  m$intercept <- m$CI <- NULL
+  m$drop.unused.levels <- TRUE
+  m[[1]] <- as.name("model.frame")
+  m <- eval(m, sys.parent())
+  if(ncol(m) != 2L)
+    stop("Must specify a single response and a single explanatory variable in the formula")
+  ## Extract missing value info
+  na.action <- attr(m, "na.action")
+  y <- m[, 1L]
+  yname <- names(m)[1L]
+  x <- m[,2]
+  xname <- names(m)[2L]
+  n <- length(y)
+  if (n < 3L)
+    stop("model data should effectively be longer than 2.")  
+  ## Calculate the statistics
+  ## A fast, efficient way to compute all possible slopes:
+  slopes <- unlist(lapply(seq(along = y), function(i, y, t)
+                                    ((y[i] - y[1L:i]) / (t[i] - t[1L:i])), y, x))
+  slopes <- sort(slopes) # removes missings (due to ties in x)
+  sen.slope <- median(slopes)
+  ## Compute the variance of S, accounting only for ties in x
+  varS <- vark(seq(along=y), x) # Forces no ties in y
+  Calpha <- -qnorm((1-CI)/2) * sqrt(varS)
+  M1 <- as.integer((length(slopes) - Calpha)/2)
+  M2 <- as.integer((length(slopes) + Calpha)/2) + 1
+  sen.CI <- slopes[c(M1, M2)]
+  names(sen.CI) <- paste(c("Lower", "Upper"),
+                         substring(sprintf("%.2f", CI), 2), sep="") # drop 0
+  ## Median of the data values.
+  median.y <- median(y)         
+  ## Median of the time values.
+  median.x <- median(x)
+  
+  ## A line representing the trend of the data then is given by
+  ##
+  ##    y(t) = sen.slope*(t-med.time)+med.data
+  ##
+  ##    This line has the slope of the trend and passes through
+  ##       the point (t=med.time, y=med.data)
+  ## Compute the coefficients for the line: intercept and slope
+  coef <- c(sen.slope*(-median.x)+median.y, sen.slope)
+  fits <- coef[1L] + coef[2L]*x
+  resids <- y - fits
+  if(intercept == 'A1m') {
+    coef[1L] <- coef[1L] + median(resids)
+    resids <- y - coef[1L] - coef[2L]*x
+  }
+  ## Return the statistics.
+  retval <- list(call=call, coefficients=coef, slope.CI=sen.CI, residuals=resids, 
+                 fitted.values=fits, na.action=na.action, x=x, y=y, var.names=c(yname, xname),
+                 model=m)
+  oldClass(retval) <- "senSlope"
+  return(retval)
+}
+```
+
+```{r}
+### ------------------------------------------------------------------------------------------------------------ ###
+### Filter Corine Data by class 'peatbogs' (Code_18 = 412) ###
+### ------------------------------------------------------------------------------------------------------------ ###
+path_in = '/home/laurag/Arbeit/wwu/data/peatland/CLC_u2018_full/u2018_clc2018_v2020_20u1_geoPackage/DATA/'
+CLC18=st_read(paste0(path_in, 'U2018_CLC2018_V2020_20u1.gpkg'))
+head(CLC18)
+CLC18_filtered = CLC18 %>% filter(Code_18 == 412)
+st_write(CLC18_filtered,  '/home/laurag/Arbeit/wwu/data/peatland/u2018_clc2018_v2020_20u1_geoPackage/DATA/all_peatlands_small_size.shp')
+```
+
+```{r}
+### ------------------------------------------------------------------------------------------------------------ ###
+### Create random sample of 100000 points within peatbog area defined by CorineLC2018 ###
+### ------------------------------------------------------------------------------------------------------------ ###
+path_in = '/home/laurag/Arbeit/wwu/data/peatland/u2018_clc2018_v2020_20u1_geoPackage/DATA/'
+path_out = '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+all_peats=sf::st_read(paste0(path_in,'all_peatlands_small_size.shp'))
+all_peats$geometry
+# sample random 100.000 points
+ran_som = st_sample(all_peats, 100000, 'random')
+st_write(ran_som, paste0(path_out,'random_points_EU.shp'))
+
+#500 points in NeustaedterMoor
+path_in = '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/Neustaedter_RS/input/'
+path_out = '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/Neustaedter_RS/output/'
+
+all_peats=sf::st_read(paste0(path_in,'NeustaedterMoor_poly.gpkg'))
+all_peats$geometry
+# sample random 100.000 points
+ran_som = st_sample(all_peats, 500, 'random')
+st_write(ran_som, paste0(path_out,'random_points_NM_R.shp'))
+```
+
+```{r}
+### ------------------------------------------------------------------------------------------------------------ ###
+### convert sample points to multipoints to export NDWI trend statistics per point in GEE ###
+# input: 10000 random points (.shp file format)
+# output: multipoint with 500 points per multipoint feature as .csv file in geojson format
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#load random points (here: they were seperated before in multiple shape file packages)
+path_3000points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/data_prep/data_out/500_multipoints_in/Laura/'
+
+#list all files in directory
+shp_list=list.files(path_3000points, pattern = '*.shp')
+
+#read all files from lsit
+shps_3000_list=lapply(shp_list, function(shp){
+    points_3000=sf::st_read(dsn= paste0(path_3000points, shp))
+    return(points_3000)
+})
+#rowbind all files
+shp_1000_all=do.call(rbind, shps_3000_list)
+#shp_1000_all=rbind(shp_1000_all,shp_1000_all)
+
+#convert shapefiles to geojson multipoint format: {"geodesic":false,"type":"MultiPoint","coordinates":['']}' to 
+#get a GEE-list of 500 points per multipoint feature 
+#output: .csv table with 1 multipoint feature containing 500 points in geojson format per row
+
+#number of multipoint features containing 500 points
+multipoint_size=150
+denom=nrow(shp_1000_all)%/%multipoint_size # +1 if there is a remainder (modulus)
+denom=2
+
+lapply(seq(0,c(denom-1)),function(spl){
+    if(spl<c(denom)){
+        print(spl)
+        print(paste0('start= ', c(c(multipoint_size*spl)+1)))
+        print(paste0('end= ', c(multipoint_size*c(spl+1))))
+        }else{
+        print('last')
+        print(paste0('start= ', c(c(multipoint_size*spl)+1)))
+        print(paste0('end= ', nrow(shp_1000_all)))
+        }
+})   
+
+var_size_out=lapply(seq(0,c(denom-1)),function(spl){
+    if(spl<c(denom-1)){
+        print(spl)
+        #get 500 points per iteration
+        shp_l_2=shp_1000_all[c(c(multipoint_size*spl)+1):c(multipoint_size*c(spl+1)),]
+        sdcombine_1 = st_combine(shp_l_2)
+        print(sdcombine_1)
+        #convert to dataframe
+        plus_prop = as.data.frame(sdcombine_1)
+        colnames(plus_prop)=c('geometry')
+        #convert to spatial object
+        combined_sf=st_as_sf(plus_prop, crs = crs(shp_l_2)) #geom=geojson_sf(plus_prop$geometry),
+        #convert coordinates to geojson format
+        gjson_sf=geojsonio::geojson_json(combined_sf)
+        print(gjson_sf)
+        json_char=as.character(gjson_sf)
+        j_split=strsplit(json_char, split='coordinates\":[', fixed = TRUE)
+        j_split_2=strsplit(as.character(j_split[[1]][2]), split=']}}', fixed = TRUE)
+        #add multipoint string to coordinate string
+        csv_prep_df=as.data.frame(as.character(paste0('{"geodesic":false,"type":"MultiPoint","coordinates":[', j_split_2[[1]][1],']}')))
+        #colname needs to be changed to '.geo' so that coordinates are read as coordinates by GEE 
+        colnames(csv_prep_df)=c('.geo')
+        #print start and end row of input point shape per iteration
+        print(paste0('start= ', c(c(multipoint_size*spl)+1)))
+        print(paste0('end= ', c(multipoint_size*c(spl+1))))
+    }else{
+        #last iteration
+        print('last')
+        #get all remaining points of input shape file until last row (if number of input points can't be divided to packages of the same size without remainder)
+        shp_l_2=shp_1000_all[c(c(multipoint_size*spl)+1):nrow(shp_1000_all),]
+        #convert to dataframe
+        sdcombine_1 = st_combine(shp_l_2)
+        plus_prop = as.data.frame( sdcombine_1)
+        #convert to sf
+        combined_sf=st_as_sf(plus_prop, crs = crs(shp_l_2)) #geom=geojson_sf(plus_prop$geometry),
+        #convert coordinates to geojson format
+        gjson_sf=geojsonio::geojson_json(combined_sf)
+        json_char=as.character(gjson_sf)
+        j_split=strsplit(json_char, split='coordinates\":[', fixed = TRUE)
+        j_split_2=strsplit(as.character(j_split[[1]][2]), split=']}}', fixed = TRUE)
+        #add multipoint string to coordinate string
+        csv_prep_df=as.data.frame(as.character(paste0('{"geodesic":false,"type":"MultiPoint","coordinates":[', j_split_2[[1]][1],']}')))
+        #colname needs to be changed to '.geo' so that coordinates are read as coordinates by GEE 
+        colnames(csv_prep_df)=c( '.geo')
+        #print start and end row of input point shape per iteration
+        print(paste0('start= ', c(c(multipoint_size*spl)+1)))
+        print(paste0('end= ', nrow(shp_1000_all)))
+        }
+    return(csv_prep_df)    
+})
+#rowbind multipoint features and convert to dataframe    
+shp_bind=do.call(rbind,var_size_out)
+shp_bind_df=as.data.frame(shp_bind)
+#write multipoint table for Google Earth Engine input
+write.csv(shp_bind_df, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/Harz_test/NA_test/NW_raster_300points_in.csv', row.names=FALSE)
+```
+
+```{r}
+### ------------------------------------------------------------------------------------------------------------ ###
+#### convert csv files exported from GEE to point shapes (gpkg) ####
+# run 2 times: for downloaded points with NDWI statistics and NDWI trend statistics, respectively
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#path_all='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/gee_export_csv/multipoints/scale30/na_solved/'
+path_all = '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/statistics_ndwi/download/stats_ndwi/'
+#path_all= '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/statistics_ndwi/download/'
+#check_export='multipoint_extramp_extra_points.csv'
+check_export=list.files(paste0(path_all), pattern = "*.csv", recursive = TRUE)
+
+read_all_csv=function(single){
+    single_csv=read.table(paste0(path_all, single), header = T, sep = ',')
+    single_csv_clean=single_csv %>%
+        mutate(across('.geo', str_replace, '"geodesic":false,"', '"'))
+    #"geodesic":false,"type":"Point","coordinates":[23.26748875280076,42.56949943114851]
+    geometries = do.call(rbind, sapply(single_csv_clean$.geo, geojson_sf))[,1]
+    single_st=st_as_sf(data.frame(single_csv_clean), geom=geometries)
+     # '.geo
+    return(single_st)
+}
+
+single_all= lapply(check_export, read_all_csv)
+#remove list elements of type NULL (empty .csv files)
+#single_all_compacted=compact(single_all)
+single_all_bind=do.call(plyr::rbind.fill,single_all)
+colnames(single_all_bind)
+nrow(single_all_bind)
+summary(single_all_bind)
+single_all_bind=single_all_bind[,-1]
+single_all_bind=single_all_bind[,-61]
+single_all_ext=single_all[[1]][,-1]
+single_all_ext=single_all_ext[,-61]
+colnames(single_all_ext)
+
+single_all_incl_ext= rbind(single_all_bind,single_all_ext)
+nrow(single_all_incl_ext)
+single_all_bind=single_all_incl_ext
+#write all 100000 points including duplicates
+all_points_snow_filter_test=st_as_sf(single_all_bind, geom=single_all_bind$geom, crs = st_crs(CRS("+init=epsg:4326")))
+all_points_snow_filter_test=st_set_crs(all_points_snow_filter_test, st_crs(CRS("+init=epsg:4326")))
+st_write(all_points_snow_filter_test,'/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/gee_export_csv/multipoints/scale30/na_solved/part_Marvin/34001_67501_nasolved_marvin.gpkg')
+
+#remove duplicates
+single_all_out_unique=single_all_bind %>% distinct(geom, .keep_all = TRUE)
+nrow(single_all_out_unique)
+#write out only duplicates to check values and location
+single_all_out_missing=single_all_bind[duplicated(single_all_bind$geom), ]
+all_points_snow_missing=st_as_sf(single_all_out_missing, geom=single_all_out_missing$geom, crs = st_crs(CRS("+init=epsg:4326")))
+st_write(all_points_snow_missing, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/gee_export_csv/multipoints/scale30/na_solved/part_Marvin/all_points_nasolved_marvin.gpkg')
+
+summary(single_all_out_unique)
+class(single_all_out_unique)
+nrow(single_all_out_unique)
+
+single_all_out_unique_df=as.data.frame(single_all_out_unique)
+#random_unique=single_all_out[!duplicated(single_all_out),]
+
+single_all_out_st=sf::st_as_sf(single_all_out_unique, crs= st_crs(CRS("+init=epsg:4326")), geom=single_all_out_unique$geom)#geojson_sf($geometry)
+colnames(single_all_out_st)
+single_all_out_st_clean=single_all_out_st[,-which(c(colnames(single_all_out_st))==".geo")]
+single_all_out_st_clean=single_all_out_st_clean[,-which(colnames(single_all_out_st_clean)=='system.index')]
+
+colnames(single_all_out_st_clean)
+single_all_out_st_clean_write=st_set_crs(single_all_out_st,st_crs(CRS("+init=epsg:4326")))
+st_write(single_all_out_st,'/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/trendstats_snow_filtered_extra_nasolved.gpkg')
+#st_write(single_all_out_st_clean_write,'/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/Harz_test/Harz_trend_300points_test.gpkg')
+#intersect_points_missing=sf::st_intersects(st_buffer(single_all_out_st, dist = 40), all_points_reproj)
+#length(unlist(intersect_points_missing))
+#missing_to_redo=all_points_reproj[-c(unlist(intersect_points_missing)),]
+#class(missing_to_redo)
+#nrow(all_points_reproj)
+#nrow(single_all_out_st)
+#max(unlist(intersect_points_missing))
+```
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#### filter NDWI statistics dataset on forest/water and outliers ####
+### ------------------------------------------------------------------------------------------------------------ ###
+
+#define input path
+path_trend_points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+#read forest and water mask raster
+forest_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/forest/FTY_2018_010m_eu_03035_v010/DATA/FTY_2018_010m_eu_03035_V1_0.tif')
+water_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/water/WAW_2018_010m_eu_03035_v020/DATA/WAW_2018_010m_eu_03035_V2_0.tif')
+activeCat(water_mask)<- 'Value'
+
+#load NDWI statistics
+NDWIstats=st_read(dsn= paste0(path_trend_points, 'trendstats_snow_filtered_extra_nasolved.gpkg'))
+
+###filter forest/water point locations
+
+NDWIstats_3035=st_transform(NDWIstats, crs='epsg:3035')
+
+pixel_extracted_forest_mean=terra::extract(forest_mask, NDWIstats_3035, bind = TRUE)
+
+points_nonforest1= pixel_extracted_forest_mean %>% filter(Class_Name == 'all non-forest areas')
+points_nonforest2= pixel_extracted_forest_mean %>% filter(Class_Name == 'outside area')
+points_nonforest=rbind(points_nonforest1,points_nonforest2)
+
+pixel_extracted_water=terra::extract(water_mask, points_nonforest, bind = TRUE)
+
+points_nonwater= pixel_extracted_water %>% filter(Value != 1) %>% filter(Value != 2)
+
+#remove forest/water category columns
+names(points_nonwater)
+NDWIstats_filtered_fw=points_nonwater[,-62]
+NDWIstats_filtered_fw=NDWIstats_filtered_fw[,-61]
+
+NDWIstats_filtered_fw=st_as_sf(NDWIstats_filtered_fw)
+NDWIstats_filtered_fw=st_transform(NDWIstats_filtered_fw, crs='epsg:4326')
+
+
+```
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#### filter NDWI trend statistics dataset based on forest/water mask ####
+### ------------------------------------------------------------------------------------------------------------ ###
+#define input path
+path_trend_points='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/'
+
+#read forest and water mask raster
+forest_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/forest/FTY_2018_010m_eu_03035_v010/DATA/FTY_2018_010m_eu_03035_V1_0.tif')
+water_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/water/WAW_2018_010m_eu_03035_v020/DATA/WAW_2018_010m_eu_03035_V2_0.tif')
+activeCat(water_mask)<- 'Value'
+
+#load trend points
+points_complete=sf::st_read(dsn= paste0(path_trend_points, 'trendpoints_snow_filtered_extra_nasolved_forest_water_filtered_plustempwat12.gpkg'))
+
+#sort column names
+points_complete_sorted=points_complete[,order(colnames(points_complete))]
+#remove extra geometry column
+points_complete_sorted=points_complete_sorted[,-13]
+points_complete_sorted_sf=st_as_sf(points_complete_sorted, geom=points_complete_sorted$geom)
+
+
+trendstats_3035=st_transform(points_complete_sorted_sf, crs='epsg:3035')
+
+pixel_extracted_forest_mean=terra::extract(forest_mask, trendstats_3035, bind = TRUE)
+
+points_nonforest1= pixel_extracted_forest_mean %>% filter(Class_Name == 'all non-forest areas')
+points_nonforest2= pixel_extracted_forest_mean %>% filter(Class_Name == 'outside area')
+points_nonforest=rbind(points_nonforest1,points_nonforest2)
+
+pixel_extracted_water=terra::extract(water_mask, points_nonforest, bind = TRUE)
+
+points_nonwater= pixel_extracted_water %>% filter(Value != 1) %>% filter(Value != 2)
+
+#remove forest/water category columns
+names(points_nonwater)
+trendstats_filtered_fw=points_nonwater[,-62]
+trendstats_filtered_fw=trendstats_filtered_fw[,-61]
+
+trendstats_filtered_fw=st_as_sf(trendstats_filtered_fw)
+trendstats_filtered_fw=st_transform(trendstats_filtered_fw, crs='epsg:4326')
+
+
+```
+
+```{r, eval = T, echo = F}
+### ------------------------------------------------------------------------------------------------------------ ###
+#### filter NDWI statistics and NDWI trend statistics dataset on outliers ####
+### ------------------------------------------------------------------------------------------------------------ ###
+###NDWI base statistics
+
+#create a vector for iteratively filtering to column names including a specific month name
+month_vec=tolower(month.abb)
+
+#filter locations with time-series statistics with minima < -1 and maxima > 1 (= NDWI outliers in time-series) 
+NDWIstats_filtered=lapply(seq(1,12), function(i){
+  m=month_vec[i]
+  filtered_month= NDWIstats_filtered_fw[,grep(m,colnames(NDWIstats_filtered_fw))]
+  points_filtered= filtered_month %>% filter(.[[1]] <= 1) %>% filter(.[[4]] >= -1)
+  test_filter_df=data.frame(points_filtered)  
+  if(nrow(test_filter_df)>0){
+    test_filter_df_mon=cbind(c(rep(m,nrow(test_filter_df))),test_filter_df)
+    
+    colnames(test_filter_df_mon)=c('mon','max', 'mean', 'median', 'min', 'stdev', 'geom')
+    test_filter_sf=st_as_sf(data.frame(test_filter_df_mon), geom = test_filter_df_mon$geom)
+  }else{
+    test_filter_sf=NULL
+  }  
+  return(test_filter_sf)
+})
+#save monthly list for supsequent r scripts
+saveRDS(NDWIstats_filtered, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/NDWIstats_fwo_filtered_long.rds')
+
+#combine statistic of all month in one simple feature collection and write
+stats_filtered_bind=do.call(rbind,NDWIstats_filtered)
+#stats_filtered_bind_4326=st_transform(stats_filtered_bind, crs='epsg:4326')
+stats_filtered_bind$mon=factor(stats_filtered_bind$mon, levels=month_vec)
+summary(stats_filtered_bind)
+st_write(stats_filtered_bind, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/NDWIstats_fwo_filtered_long.gpkg')
+
+### ------------------------------------------------------------------------------------------------------------ ###
+### NDWI trend statistics
+
+#!!! remove:
+### next step only works with this file... unsolved
+trendstats_filtered_fw=st_read('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/trendpoints_snow_filtered_extra_nasolved_forest_water_filtered_plustempwat12.gpkg')
+#!!!
+
+#list monthly trend statistics
+slope_filtered_monthly=lapply(seq(1,12), function(i){
+  m=month_vec[i]
+  filtered_month= trendstats_filtered_fw[,grep(m,colnames(trendstats_filtered_fw))]
+  return(filtered_month)
+})
+
+#remove locations with time-series including outliers from NDWI trend statistics 
+trendstats_filtered_outliers=lapply(seq(1,12), function(i){
+  trendstats_filtered_outl_i=slope_filtered_monthly[[i]] %>% filter(slope_filtered_monthly[[i]]$geom %in% NDWIstats_filtered[[i]]$geom)
+  return(trendstats_filtered_outl_i)
+})
+#save monthly list for supsequent r scripts
+saveRDS(trendstats_filtered_outliers, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/trendpoints_fwo_filtered_long.rds')
+
+
+#combine trend statistic of all month in one simple feature collection
+trendstats_filtered_outliers_long=lapply(seq(1,12), function(i){
+  m=month_vec[i]
+  trendstats_fwo_i=as.data.frame(cbind(c(rep(m, nrow(trendstats_filtered_outliers[[i]]))),trendstats_filtered_outliers[[i]]))
+  colnames(trendstats_fwo_i)=c('mon', 'count', 'tau', 'p_val', 'Sint', 'Sslope', 'geom')
+  trendstats_fwo_i_sf=st_as_sf(trendstats_fwo_i, geom=trendstats_fwo_i$geom)
+  return(trendstats_fwo_i_sf)
+})
+
+trendstats_filtered_fwo_bind=do.call(rbind,trendstats_filtered_outliers_long)
+trendstats_filtered_fwo_bind$mon=factor(trendstats_filtered_fwo_bind$mon, levels=month_vec)
+summary(trendstats_filtered_fwo_bind)
+
+#st_write(trendstats_filtered_fwo_bind, '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/output/trendpoints_fwo_filtered_long.gpkg')
+
+
+```
