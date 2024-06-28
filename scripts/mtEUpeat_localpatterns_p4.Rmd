@@ -1,15 +1,22 @@
 ---
-title: "Analysis European trends"
+title: "Moisture trends in European peatlands - Circumpolar barplots"
 author: "Laura Giese"
 date: "8. Jan 2023"
 output:
-  rmarkdown::html_document:
-    toc: true
+  html_document:
+        dev: svglite
 editor_options: 
   chunk_output_type: console
 ---
 
-```{r}
+## Part 4
+### This script shows results of our analysis of local NDWI trends of selected peatland sites (including insignificant trends) in Europe.
+
+```{r, echo=T, eval=T, warning = F, message = F}
+###-----------------------------------------------------------------###
+###                          load libraries                         ###
+###-----------------------------------------------------------------###
+
 #devtools::install_github('renv')
 #install.packages('renv')
 #renv::init()
@@ -151,42 +158,48 @@ senSlope <- function(formula, data, subset, na.action, intercept='Ac',
 }
 ```
 
-```{r, eval = F, echo = F}
+```{r, eval = T, echo = T, warning = F, message = F}
 ### ------------------------------------------------------------------------------------------------------------ ###
 #Plot local trend patterns for entire peatland sites
 ### ------------------------------------------------------------------------------------------------------------ ###
-myTheme <- theme(legend.text = element_text(size = 15), 
-                 legend.title = element_text(size = 15), 
+# theme for plotting
+myTheme <- theme(legend.text = element_text(size = 10), 
+                 legend.title = element_text(size = 10), 
                  legend.key.size = unit(1, 'cm'),
                  legend.position = 'bottom',
                  panel.grid.major = element_blank(), 
                  panel.background = element_rect(fill = "#cccccc"))
+# colour palette for plotting
+pal <- colorRampPalette(c('goldenrod3','goldenrod3','goldenrod3',"#f7c973","#f7c973", "#f7bf59", '#ecebeb', 'lightblue', "#209fb6", "#209fb6","#209fb6",'darkblue','darkblue','darkblue'))
 
-id='EU_1131548'
-#all_swind_ids=c('EU_1649895-0000000000-0000000000','EU_1649895-0000000000-0000004864','EU_1649976-0000000000-0000000000','EU_1649976-0000000000-0000004864')
-#all_swind_ids=c('EU_1936806','EU_1623481','EU_1623480', 'EU_1755161', 'EU_2331582','EU_1131547','EU_1131548', 'EU_1623525')
-all_swind_ids=c('EU_1936807','EU_1936819','EU_1936813','EU_1936832')
-#all_swind_ids=swind_overlap_id_proj$ID
-all_swind_ids=all_swind_ids[-26]
-all_swind_ids=all_swind_ids[-26]
-new_sights_BR=st_read('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/InteraCt_plus.shp')
-new_sights_BR=st_read('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/ndwi_tif_after_snow/selected_sites_final_paper.shp')
-colnames(new_sights_BR)
-all_swind_ids=c(new_sights_BR$ID)
-all_swind_ids=all_swind_ids[c(1:12,14:length(all_swind_ids))]
-which(all_swind_ids=='EU_1623525')
-#EU_1623556_1 & EU_1623556_2
-id='EU_1623556'
-lapply(all_swind_ids, function(id){
-#lapply(all_swind_ids[c(1:12,14:length(all_swind_ids))], function(id){
-#lapply(seq(12), function(l){
-  #plot_sf=st_as_sf(slope_filtered[[l]])
-  #print(month_names_full[l])
-peat_rast=rast(paste0(path_peat_swind_tifs, id, '.tif'))
-peat_rast_summer_mean=mean(subset(peat_rast,grep('Sslope_jun',names(peat_rast), value = T)),
+# IDs of selcted peatland sites (filename)
+all_site_ids=c('EU_1709986', 'EU_1755161', 'EU_1936806', 'EU_1710044', 'EU_2331582')
+#all_site_ids=c('EU_1936807','EU_1936819','EU_1936813','EU_1936832')
+
+#path to polygon shapes of all peatlands with ID attribute 
+path_in = '/home/laurag/Arbeit/wwu/data/peatland/u2018_clc2018_v2020_20u1_geoPackage/DATA/'
+all_peats=sf::st_read(paste0(path_in,'all_peatlands_small_size.shp'))
+
+#id='EU_1709986'
+
+#load forest & water mask
+forest_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/forest/FTY_2018_010m_eu_03035_v010/DATA/FTY_2018_010m_eu_03035_V1_0.tif')
+water_mask=rast('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/copernicus/water/WAW_2018_010m_eu_03035_v020/DATA/WAW_2018_010m_eu_03035_V2_0.tif')
+
+#load trend raster exported from GEE
+path_peat_sites_tifs= '/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/50singlepeats/exported_GEE/InterAct/'
+
+#calculate summer mean (June-August) and filter trend raster basde on forest and water mask (outliers negligable, has been checked before)
+
+lapply(all_site_ids, function(id){
+
+#load raster stack with trend statistic individually per peatland site
+    peat_rast=rast(paste0(path_peat_sites_tifs, id, '.tif'))
+    peat_rast_summer_mean=mean(subset(peat_rast,grep('Sslope_jun',names(peat_rast), value = T)),
                            subset(peat_rast,grep('Sslope_jul',names(peat_rast), value = T)), 
                            subset(peat_rast,grep('Sslope_aug',names(peat_rast), value = T)))
     names(peat_rast_summer_mean)=c('summer_mean_trend')
+    
     #replace pixels based on forest_mask & water mask
     peat_rast_summer_mean_proj=project(peat_rast_summer_mean, crs('epsg:3035'))
     forest_mask_crop=crop(forest_mask, peat_rast_summer_mean_proj, extend = T)
@@ -196,68 +209,60 @@ peat_rast_summer_mean=mean(subset(peat_rast,grep('Sslope_jun',names(peat_rast), 
     forest_mask_na=subst(forest_mask_na,'outside area', NA)
     forest_mask_na=subst(forest_mask_na,'broadleaved forest', 1)
     forest_mask_na=subst(forest_mask_na,'coniferous forest', 1)
-    #forest_mask_na=as.numeric(forest_mask_na)
-    #plot(forest_mask_na)
-    #peat_rast_Sslope=subset(peat_rast, grep('Sslope', names(peat_rast), value = T))
-    #random_points_within_peats=terra::intersect(vect(plot_sf),ext(peat_rast))
-    #random_points_within_peats_sf=st_as_sf(random_points_within_peats)
+
     forest_mask_na_resamp=resample(forest_mask_na, peat_rast_summer_mean_proj, method='near')
     forest_mask_na_resamp_crop=crop(forest_mask_na_resamp,peat_rast_summer_mean_proj)
     forest_mask_na_resamp_crop=as.numeric(forest_mask_na_resamp_crop)
-    #ggplot() + geom_spatraster(data=forest_mask_na_resamp_crop) +geom_sf(data=peat_shape,colour= 'black', fill='#FF000000', size=1) 
+
     water_mask_na_resamp=resample(water_mask_crop, peat_rast_summer_mean_proj, method='near')
-    #plot(water_mask_na_resamp_crop)
     water_mask_na_resamp_crop=crop(water_mask_na_resamp,peat_rast_summer_mean_proj, snap = 'near', touches = T, mask=T)
     water_mask_na_resamp_crop=as.numeric(water_mask_na_resamp_crop)
-peat_rast_summer_mean_masked=mask(peat_rast_summer_mean_proj, forest_mask_na_resamp_crop,maskvalues=c(257), inverse=F,
-   updatevalue=NA)
-peat_rast_summer_mean_masked=mask(peat_rast_summer_mean_masked, water_mask_na_resamp_crop, inverse=F, maskvalues=c(1,2), 
-   updatevalue=NA)
+
+    peat_rast_summer_mean_masked=mask(peat_rast_summer_mean_proj, forest_mask_na_resamp_crop,maskvalues=c(257), inverse=F,
+      updatevalue=NA)
+    peat_rast_summer_mean_masked=mask(peat_rast_summer_mean_masked, water_mask_na_resamp_crop, inverse=F, maskvalues=c(1,2), 
+      updatevalue=NA)
     peat_shape=all_peats[which(all_peats$ID == id),]
     peat_rast_summer_mean_plot=crop(peat_rast_summer_mean_masked, peat_shape, snap = 'near', touches = T, mask=T)
 
-#ggplot() + geom_spatraster(data=peat_rast_summer_mean_masked) +geom_sf(data=peat_shape,colour= 'black', fill='#FF000000', size=1)
-peat_rast_summer_mean_proj=project(peat_rast_summer_mean_plot, crs('epsg:4326'))
-
-    #swind_point=all_peats_swind_overlap[which(all_peats_swind_overlap$ID == id),]
-    #swind_point_spat_vec=vect(swind_point)
-    #pixel_extracted=terra::extract(peat_rast, swind_point_spat_vec, bind = TRUE)
+    peat_rast_summer_mean_proj=project(peat_rast_summer_mean_plot, crs('epsg:4326'))
 
 
-ggplot() +
+    ggplot() +
      geom_spatraster(data=peat_rast_summer_mean_proj) +
      facet_wrap(~lyr, ncol = 3) +
      scale_fill_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006),na.value='#00000000') + 
      labs(colours = "Sens Slope")+ 
-     #geom_sf(data=swind_point,size =3, colour='black')+   
      geom_sf(data=peat_shape,colour= 'black', fill='#FF000000', size=1)+    
-     #geom_sf(data=random_points_within_peats_sf, aes_string(fill=colnames(as.data.frame(random_points_within_peats_sf))[1]), size =2,shape = 21) +
-     #scale_fill_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.0015,0,0.0015,0.006)) +
-     #geom_sf(data=swind_point, aes(colour=factor(LSts_trend_reconstructed)),size =2)+
-     #scale_colour_manual(values=c('-1'='#3081e8', '0'='#ffffff', '1'='#ff3000'))+
-     #labs(colour = "Reconstructed Trend")+ 
-     #ggtitle(id) + 
+     labs(colour = "Sen's Slope [NDWI/yr] ")+ 
+     ggtitle(id) + 
     myTheme
-ggsave(file = paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/summer_mean_peats_trend_plots_',id,'_outline.svg'), 
-    width = 10, # The width of the plot in inches
-    height = 14)
+#ggsave(file = paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/summer_mean_peats_trend_plots_',id,'_outline.svg'), 
+#    width = 10, # The width of the plot in inches
+#    height = 14)
 })
-setwd('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/')
-getwd()
-id='EU_2297536'
-all_swind_ids=c('EU_2331582')
+
+```
+
+## Supplementary
+### Trend rasters for selected peatland sites and line plots of time series at one exemplary location within site
+
+```{r, eval = T, echo = T, warning = F, message = F}
+#### ----------------------------------------------------------------------------- ####
+# NDWI trend raster: Plots of significant trends for selected sites for all month 
+#### ----------------------------------------------------------------------------- ####
+
+#to plot only significant trends p> 0.05 set p_val_filter to TRUE, otherwise to FALSE
 p_val_filter=TRUE
-#all sslopes selected sites
-lapply(all_swind_ids, function(id){
 
-    peat_rast=rast(paste0(path_peat_swind_tifs, id, '.tif'))
-    #swind_point=all_peats_swind_overlap[which(all_peats_swind_overlap$ID == id),]
-    #swind_point_spat_vec=vect(swind_point)
-    #pixel_extracted=terra::extract(peat_rast, swind_point_spat_vec, bind = TRUE)
 
+lapply(all_site_ids, function(id){
+
+    #load trend raster (Sen's Slope) per peatland site
+    peat_rast=rast(paste0(path_peat_sites_tifs, id, '.tif'))
+
+#to plot only significant trends p> 0.05
     if(p_val_filter==T){
-    #peat_rast_pval=subset(peat_rast, grep('p_val', names(peat_rast), value = T))
-    #peat_rast_count=subset(peat_rast, grep('count', names(peat_rast), value = T))
     peat_rast_Sslope_proj_statmasked=lapply(seq(from=5,to=10), function(m){
         peat_rast_Sslope_proj_m=subset(peat_rast,grep(paste0('Sslope_', tolower(month.abb[m])), names(peat_rast)))
         peat_rast_pval_m = subset(peat_rast,grep(paste0('p_val_', tolower(month.abb[m])), names(peat_rast)))
@@ -282,166 +287,145 @@ lapply(all_swind_ids, function(id){
     forest_mask_na=subst(forest_mask_na,'outside area', NA)
     forest_mask_na=subst(forest_mask_na,'broadleaved forest', 1)
     forest_mask_na=subst(forest_mask_na,'coniferous forest', 1)
-    #forest_mask_na=as.numeric(forest_mask_na)
-    #plot(water_mask_crop)
-    #peat_rast_Sslope=subset(peat_rast, grep('Sslope', names(peat_rast), value = T))
-    #random_points_within_peats=terra::intersect(vect(plot_sf),ext(peat_rast))
-    #random_points_within_peats_sf=st_as_sf(random_points_within_peats)
+
     forest_mask_na_resamp=resample(forest_mask_na, peat_rast_Sslope_proj, method='near')
     forest_mask_na_resamp_crop=crop(forest_mask_na_resamp,peat_rast_Sslope_proj)
     forest_mask_na_resamp_crop=as.numeric(forest_mask_na_resamp_crop)
-    #plot(forest_mask_na_resamp_crop)
     water_mask_na_resamp=resample(water_mask_crop, peat_rast_Sslope_proj, method='near')
     
-    #plot(water_mask_crop)
     water_mask_na_resamp_crop=crop(water_mask_na_resamp,peat_rast_Sslope_proj, snap = 'near', touches = T, mask=T)
     water_mask_na_resamp_crop=as.numeric(water_mask_na_resamp_crop)
-peat_rast_Sslope_masked=mask(peat_rast_Sslope_proj, forest_mask_na_resamp_crop,maskvalues=c(257), inverse=F,
-   updatevalue=NA)
-peat_rast_Sslope_masked=mask(peat_rast_Sslope_masked, water_mask_na_resamp_crop, inverse=F, maskvalues=c(1,2), 
-   updatevalue=NA)
+    peat_rast_Sslope_masked=mask(peat_rast_Sslope_proj, forest_mask_na_resamp_crop,maskvalues=c(257), inverse=F,
+    updatevalue=NA)
+    peat_rast_Sslope_masked=mask(peat_rast_Sslope_masked, water_mask_na_resamp_crop, inverse=F, maskvalues=c(1,2), 
+    updatevalue=NA)
 
     peat_shape=all_peats[which(all_peats$ID == id),]
     peat_rast_Sslope_plot=crop(peat_rast_Sslope_masked, peat_shape, snap = 'near', touches = T, mask=T)
 
 #plot(peat_rast_Sslope_plot)
-peat_rast_Sslope_proj=project(peat_rast_Sslope_plot, crs('epsg:4326'))
+    peat_rast_Sslope_proj=project(peat_rast_Sslope_plot, crs('epsg:4326'))
 
+#rename layer for facet wrapped plot
+    rename_lookup_l=lapply(seq(from=5, to=10), function(m){
+    rename_lookup=names(peat_rast_Sslope_proj)[grep(paste0('Sslope_', tolower(month.abb[m])), names(peat_rast_Sslope_proj))]
+    if(length(rename_lookup)==0){
+      rename_lookup=NA
+    }
+      return(rename_lookup)
+    })
+    rename_lookup_v=as.data.frame(cbind(new= month.name[5:10], old = do.call(rbind,rename_lookup_l)))
+    colnames(rename_lookup_v)=c('new','old')
 
+    recode_vec =setNames(rename_lookup_v$old, rename_lookup_v$new)
+    if(length(which(is.na(recode_vec)))!=0){
+      recode_vec=recode_vec[-which(is.na(recode_vec))]
+    }
+    peat_rast_Sslope_proj=peat_rast_Sslope_proj %>%
+      rename(!!! recode_vec)
 
-#m=2
-rename_lookup_l=lapply(seq(from=5, to=10), function(m){
-  rename_lookup=names(peat_rast_Sslope_proj)[grep(paste0('Sslope_', tolower(month.abb[m])), names(peat_rast_Sslope_proj))]
-  if(length(rename_lookup)==0){
-    rename_lookup=NA
-  }
-    return(rename_lookup)
-})
-rename_lookup_v=as.data.frame(cbind(new= month.name[5:10], old = do.call(rbind,rename_lookup_l)))
-colnames(rename_lookup_v)=c('new','old')
-#rename_lookup_v$new[match(names(peat_rast_Sslope_proj_rename), rename_lookup_v$old)]
-recode_vec =setNames(rename_lookup_v$old, rename_lookup_v$new)
-if(length(which(is.na(recode_vec)))!=0){
- recode_vec=recode_vec[-which(is.na(recode_vec))]
-}
-peat_rast_Sslope_proj=peat_rast_Sslope_proj %>%
-    rename(!!! recode_vec)
-
-peat_rast_Sslope_proj_MO=peat_rast_Sslope_proj[[which(names(peat_rast_Sslope_proj) %in% c(month.name[5:10]))]]
-names(peat_rast_Sslope_proj)
-ggplot() +
+    peat_rast_Sslope_proj_MO=peat_rast_Sslope_proj[[which(names(peat_rast_Sslope_proj) %in% c(month.name[5:10]))]]
+    #names(peat_rast_Sslope_proj)
+    
+    ggplot() +
      geom_spatraster(data=peat_rast_Sslope_proj_MO) +
      facet_wrap(~lyr, ncol = 3) +
      scale_fill_stepsn(colours = pal(7), limits= c(-0.006,0.006), breaks =c(-0.006,-0.003,-0.001,0,0.001,0.003,0.006),na.value='#00000000') + 
-     #geom_sf(data=swind_point, aes(colour =factor(trend_sign)))+
-     #scale_colour_manual(values=c('-1'='darkblue', '0'='#7c7541', '1'='darkred'))+
+
      geom_sf(data=peat_shape,colour= 'black', fill='#FF000000', size=1)+ 
      scale_x_continuous(breaks = seq(-30, 30, by = 0.05))+
-     #ggtitle(id)+ 
+     ggtitle(id)+ 
     myTheme
-ggsave(file = paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/MO_month_ov_peats_trend_plots_significant',id,'.svg'), 
-    width = 10, # The width of the plot in inches
-    height = 14) 
+#ggsave(file = paste0('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/MO_month_ov_peats_trend_plots_significant',id,'.svg'), 
+#    width = 10, # The width of the plot in inches
+#    height = 14) 
 })
 
-```
 
-```{r, eval = T, echo = F}
-# NDWI raster timeseries
-###line plots ts_plus_trend
+
+#### ---------------------------------------------------------------- ####
+# NDWI timeseries: Line plots plus trends
+#### ---------------------------------------------------------------- ####
+
+#load rasters stacks containing median NDWI time series (41 years ~ max 41 layers) for each month
 ts_rast_path='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/ndwi_tif_after_snow/selected_final_paper/'
-path_plots='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/peats_swindles/selected_sites_plots/BjornRobroek/plots_indiv_sites/significance_filtered/'
 
-trend_path='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/50singlepeats/exported_GEE/InterAct/'
+trend_path=path_peat_sites_tifs #'/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/50singlepeats/exported_GEE/InterAct/'
 points_path='/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/ndwi_tif_after_snow/selected_sites_final_paper_extr.gpkg'
 points_extr=st_read(points_path)
 
-new_sights_BR=st_read('/home/laurag/Arbeit/wwu/R/workspaces/satellite_ts_R/random_sample_analysis/ndwi_tif_after_snow/selected_sites_final_paper.shp')
-all_swind_ids=c(new_sights_BR$ID)
-all_swind_ids=all_swind_ids[7]
-l=1
+#l=1
 
-lapply(seq(length(all_swind_ids)), function(l){
-ts_list=list.files(paste0(ts_rast_path,all_swind_ids[l]), pattern = '*.tif$', full.names=TRUE)
-ts_list_rast=lapply(ts_list, rast)
-stack_rast=rast(ts_list_rast)
-point_id=points_extr %>% filter(ID == all_swind_ids[l])
+lapply(seq(length(all_site_ids)), function(l){
+    ts_list=list.files(paste0(ts_rast_path,all_site_ids[l]), pattern = '*.tif$', full.names=TRUE)
+    ts_list_rast=lapply(ts_list, rast)
+    stack_rast=rast(ts_list_rast)
 
-val_extracted_pt=lapply(seq(dim(stack_rast)[3]),function(b){
-    band=stack_rast[[b]]
-    n=names(band)
-    ex = terra::extract(band, point_id, xy=T, na.rm=TRUE)
-    year=as.numeric(substr(str_split(n, '_')[[1]][2], 1,4))
-    month=as.numeric(str_split(str_split(n, '_')[[1]][2], '-')[[1]][2])
-    result = data.frame(Year=year,Month=month,NDWI=ex[,2], x=ex[,3], y=ex[,4])
-    return(result)
-})
-ts_extracted_pt=as.data.frame(do.call(rbind,val_extracted_pt))
-ts_extracted_pt[,2]=as.factor(ts_extracted_pt[,2])
-#plot all NDWI time series
-#ggplot(ts_extracted_pt)+
-  #geom_line(aes(x=Year, y=NDWI, color=Month))
-
-#only time series with significant trends
-#p_sign_max_freq=filtered_yr_sf[unlist(st_intersects(max_freq_point, filtered_yr_sf)),]  
-#month_df=data.frame(name=c(month.name),nr=c(seq(12)))
-#filtered_m_nr= month_df %>% filter(name %in% p_sign_max_freq$Month)
-###--------------------------------###
-### iterate over months
-###--------------------------------###
-#month_i = unique(ts_extracted_pt$Month)[6]
-
-#plot slope and NDWI timeseries per month with significant trend
-list_trend_model_data=lapply(unique(ts_extracted_pt$Month), function(month_i){ #
-#list_trend_model_data=lapply(as.factor(seq(5,10)), function(month_i){
-#print(month_i)
-#sig_mon=filtered_m_nr$nr[month_i]
-#ts_extracted_pt_sign = ts_extracted_pt %>% filter(Month %in% filtered_m_nr$nr)
-filtered_ts_mon= ts_extracted_pt %>% filter(Month == month_i)
-filtered_ts_mon_nona=na.omit(filtered_ts_mon)
-
-if(as.numeric(as.character(month_i))<11 & as.numeric(as.character(month_i))>4){
-#if(as.numeric(as.character(month_i)) ==10){
-
-sens_USGS_sig_mon=senSlope(NDWI ~ Year, data=filtered_ts_mon, na.action = na.exclude)
+    #extract time series at one selcted point (selected based on: maximum number of significant trends) for each site
+    point_id=points_extr %>% filter(ID == all_site_ids[l])
 
 
-filtered_ts_df=as.data.frame(cbind(filtered_ts_mon_nona, fit=sens_USGS_sig_mon$fitted.values, Month_n=rep(month.abb[as.numeric(as.character(month_i))], length(sens_USGS_sig_mon$fitted.values))))
-#lot(filtered_ts_mon$Year, filtered_ts_mon$NDWI)
-#lines(filtered_ts_mon$fit, col = 'red')
-#filtered_month_single=
-if(sens_USGS_sig_mon$coefficients[2]>0){
-  col_vec_np=c("#2d2e30", "darkcyan")
-}else{
-  col_vec_np=c("#2d2e30", "#b48306")
-}
+    val_extracted_pt=lapply(seq(dim(stack_rast)[3]),function(b){
+        band=stack_rast[[b]]
+        n=names(band)
+        ex = terra::extract(band, point_id, xy=T, na.rm=TRUE)
+        year=as.numeric(substr(str_split(n, '_')[[1]][2], 1,4))
+        month=as.numeric(str_split(str_split(n, '_')[[1]][2], '-')[[1]][2])
+        result = data.frame(Year=year,Month=month,NDWI=ex[,2], x=ex[,3], y=ex[,4])
+        return(result)
+    })
+    ts_extracted_pt=as.data.frame(do.call(rbind,val_extracted_pt))
+    ts_extracted_pt[,2]=as.factor(ts_extracted_pt[,2])
 
-ggplot(filtered_ts_mon[!is.na(filtered_ts_mon$NDWI), ])+
-  geom_function(fun = ~ sens_USGS_sig_mon$coefficients[2]*.x+sens_USGS_sig_mon$coefficients[1], aes(color='Trend'), linewidth=1.5)+
-  geom_line( aes(x=Year, y=NDWI, color = 'NDWI'), linewidth = 1.5)+ #  
-  #geom_line(aes(x=Year, y=fit), color='red')  
-  #labs(color = paste0(month.name[sig_mon],'_NDWI')) +
-  theme_light()+
-  theme(legend.position="top", axis.text=element_text(size=14),
-        axis.title=element_text(size=16,face="bold"), plot.title = element_text(size=22),
-        legend.text = element_text(size = 16), legend.title = element_text(size = 14), 
-        legend.key.size = unit(1.5, 'cm'))+
-  ylim(-0.55,0.55)+
-  xlim(1982,2022)+
-  scale_colour_manual("",values=col_vec_np)+
-  annotate(geom="text", x=2013, y=-0.5, label=paste0('Sens Slope [NDWI/yr] = ',round(sens_USGS_sig_mon$coefficients[2], digits=5)), size=7)+
-  geom_hline(yintercept=0.0, color='#323233')+
-  geom_point(aes(x=Year, y=NDWI, color = 'NDWI'), size = 2)+
-  ggtitle(month.name[as.numeric(as.character(month_i))])
+    ###--------------------------------###
+    ### iterate over months
+    ###--------------------------------###
 
-ggsave(file = paste0(path_plots, 'line_plots/lplot_trendts_', all_swind_ids[l], '_', month.name[as.numeric(as.character(month_i))], '.svg'),
-   width = 10, # The width of the plot in inches
-   height = 5)  
-}
+    #plot slope and NDWI timeseries per month with significant trend
+    list_trend_model_data=lapply(unique(ts_extracted_pt$Month), function(month_i){   #
+
+      filtered_ts_mon= ts_extracted_pt %>% filter(Month == month_i)
+      filtered_ts_mon_nona=na.omit(filtered_ts_mon)
+
+      if(as.numeric(as.character(month_i))<11 & as.numeric(as.character(month_i))>4){
+
+        sens_USGS_sig_mon=senSlope(NDWI ~ Year, data=filtered_ts_mon, na.action = na.exclude)
+        filtered_ts_df=as.data.frame(cbind(filtered_ts_mon_nona, fit=sens_USGS_sig_mon$fitted.values, Month_n=rep(month.abb[as.numeric(as.character(month_i))], length(sens_USGS_sig_mon$fitted.values))))
+
+        if(sens_USGS_sig_mon$coefficients[2]>0){
+          col_vec_np=c("#2d2e30", "darkcyan")
+        }else{
+          col_vec_np=c("#2d2e30", "#b48306")
+        }
+
+        ggplot(filtered_ts_mon[!is.na(filtered_ts_mon$NDWI), ])+
+          geom_function(fun = ~ sens_USGS_sig_mon$coefficients[2]*.x+sens_USGS_sig_mon$coefficients[1], aes(color='Trend'), linewidth=1.5)+
+          geom_line( aes(x=Year, y=NDWI, color = 'NDWI'), linewidth = 1.5)+ #  
+
+          theme_light()+
+          theme(legend.position="top", axis.text=element_text(size=12),
+            axis.title=element_text(size=14,face="bold"), plot.title = element_text(size=18),
+            legend.text = element_text(size = 14), legend.title = element_text(size = 12), 
+            legend.key.size = unit(1.5, 'cm'))+
+          ylim(-0.55,0.55)+
+          xlim(1982,2022)+
+          scale_colour_manual("",values=col_vec_np)+
+          annotate(geom="text", x=2013, y=-0.5, label=paste0('Sens Slope [NDWI/yr] = ',round(sens_USGS_sig_mon$coefficients[2], digits=5)), size=3)+
+          geom_hline(yintercept=0.0, color='#323233')+
+          geom_point(aes(x=Year, y=NDWI, color = 'NDWI'), size = 2)+
+          ggtitle(paste0(all_site_ids[l], ' ',month.name[as.numeric(as.character(month_i))], ' x=', round(st_coordinates(st_geometry(point_id))[,1], digits = 5), ' y=', round(st_coordinates(st_geometry(point_id))[,2], digits = 5)))
+
+#ggsave(file = paste0(path_plots, 'line_plots/lplot_trendts_', all_site_ids[l], '_', month.name[as.numeric(as.character(month_i))], '.svg'),
+#   width = 10, # The width of the plot in inches
+#   height = 5)  
+      }
 #return(filtered_ts_df)
-})
+    })
 
 })
+
+```
+```{r, echo =F, eval = F, echo = F}
 trend_model_data=do.call(rbind, list_trend_model_data)
 trend_model_data[,7]=factor(trend_model_data$Month_n, levels = month.abb)
 #plot all significant lines together

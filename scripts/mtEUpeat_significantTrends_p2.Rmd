@@ -268,7 +268,7 @@ ggplot() +
 # pie charts
 ### ------------------------------------------------------------------------------------------------------------ ###
 
-#categorize trend points in stron/weak negative/positive trends
+#categorize trend points in strong/weak negative/positive trends
 
 point_dens_pos=lapply(slope_filtered_sig,function(m){
   m_df=as.data.frame(m[,2:ncol(m)])
