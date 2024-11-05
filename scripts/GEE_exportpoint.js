@@ -1,7 +1,8 @@
 //Google Earth Engine Script to export monthly NDWI-trend statistics point-wise
-//(output point attributes: somenumber_statistic_monthnameabbrevation, statistic::one of the following 5 variables:
+//also see: https://code.earthengine.google.com/c1095e7f9fb64cef3b3813c29da31316
+//(output point attributes: statistic_monthnameabbrevation, statistic::one of the following 5 variables:
 //NDWI_tau:Mann Kendall's tau, count:count of available months per time series, p_val:p-value, 
-//Sslope:Sen's Slope, Sint: Intercept) 
+//Sslope: Sen's Slope, Sint: Intercept) 
 
 ///---------------------user input -----------------------///
 // set path variable and choose spatial peatland shape package
