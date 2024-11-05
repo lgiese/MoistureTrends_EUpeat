@@ -37,15 +37,13 @@ var folder = ee.String('some_folder_name').getInfo()
 ///-----------------------------------------------//
 
 
-              
-
 //All functions for Mann Kendall Trend Analysis of NDWI based on Landsat satellite data
 
 
 var lsNDWI = function(aoi){
   //cloud and saturation mask adapted from
   //https://gis.stackexchange.com/questions/425159/how-to-make-a-cloud-free-composite-for-landsat-8-collection-2-surface-reflectanc
-  // by Marvin Ludwig 
+  //implemented by Marvin Ludwig 
   
   function maskLcl(image) {
   // Bit 0 - Fill
@@ -140,9 +138,9 @@ return(L)
 
 
 //function for building monthly medians
-
+// the following code has been produced by Laura Giese
 var YMed = function(monthColl, from, to, month){
-// by Laura Giese
+
 // iterate over year list
   
   var year_list = ee.List.sequence(from, to);
