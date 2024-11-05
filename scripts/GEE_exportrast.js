@@ -1,3 +1,9 @@
+//Google Earth Engine Script to export monthly NDWI-trend statistics 
+//see also: https://code.earthengine.google.com/5c21735075e33a8eba27bfb24fa3b692
+//(output bandnames: somenumber_statistic_monthnameabbrevation, statistic::one of the following 5 variables:
+//NDWI_tau:Mann Kendall's tau, count:count of available months per time series, p_val:p-value, 
+//Sslope:Sen's Slope, Sint: Intercept) 
+
 ///---------------------user input -----------------------///
 // set path variable to your peatland polygon file 
 //(format: '.shp', attribute 'ID' necessary, multiple features possible) in your assets 
