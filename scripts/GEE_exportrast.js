@@ -1,5 +1,5 @@
-//Google Earth Engine Script to export monthly NDWI-trend statistics 
-//see also: https://code.earthengine.google.com/5c21735075e33a8eba27bfb24fa3b692
+//Google Earth Engine Script to export monthly NDWI-trend statistics or entire areas within polygons
+//see also: https://code.earthengine.google.com/5f7beb6d76d6357d808504207b7e9fd9
 //(output bandnames: somenumber_statistic_monthnameabbrevation, statistic::one of the following 5 variables:
 //NDWI_tau:Mann Kendall's tau, count:count of available months per time series, p_val:p-value, 
 //Sslope:Sen's Slope, Sint: Intercept) 
