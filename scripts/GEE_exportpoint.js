@@ -1,3 +1,8 @@
+//Google Earth Engine Script to export monthly NDWI-trend statistics point-wise
+//(output point attributes: somenumber_statistic_monthnameabbrevation, statistic::one of the following 5 variables:
+//NDWI_tau:Mann Kendall's tau, count:count of available months per time series, p_val:p-value, 
+//Sslope:Sen's Slope, Sint: Intercept) 
+
 ///---------------------user input -----------------------///
 // set path variable and choose spatial peatland shape package
 //see https://github.com/lgiese/MoistureTrends_EUpeat/blob/main/scripts/MoistureTrendsEUpeatlands_datapreparation_p0.Rmd how to prepare mulitpoint dataset
