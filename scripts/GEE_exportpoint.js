@@ -1,21 +1,26 @@
 //Google Earth Engine Script to export monthly NDWI-trend statistics point-wise
-//also see: https://code.earthengine.google.com/c1095e7f9fb64cef3b3813c29da31316
-//(output point attributes: statistic_monthnameabbrevation, statistic::one of the following 5 variables:
+//(output point attributes: statistic_monthnameabbreviation, statistic::one of the following 5 variables:
 //NDWI_tau:Mann Kendall's tau, count:count of available months per time series, p_val:p-value, 
-//Sslope: Sen's Slope, Sint: Intercept) 
+//Sslope:Sen's Slope, Sint: Intercept) 
+
 
 ///---------------------user input -----------------------///
 // set path variable and choose spatial peatland shape package
 //see https://github.com/lgiese/MoistureTrends_EUpeat/blob/main/scripts/MoistureTrendsEUpeatlands_datapreparation_p0.Rmd how to prepare mulitpoint dataset
 var aoi_all_path = "projects/gee_path_asset/to/multipoint_csv";
 
+
 // generate folder with specific name in your google drive for each point shape package
 // set folder name to folder in your Google drive
 var folder = ee.String('some_folder_name').getInfo()
 
+
 //click 'Run' and wait until all tasks show up in Tasks (upper right corner)
 //press F12 to open browser console and follow: https://github.com/gee-hydro/gee_monkey
 ///-----------------------------------------------//
+
+
+              
 
 //All functions for Mann Kendall Trend Analysis of NDWI based on Landsat satellite data
 
@@ -23,7 +28,7 @@ var folder = ee.String('some_folder_name').getInfo()
 var lsNDWI = function(aoi){
   //cloud and saturation mask adapted from
   //https://gis.stackexchange.com/questions/425159/how-to-make-a-cloud-free-composite-for-landsat-8-collection-2-surface-reflectanc
-  // implemented by Marvin Ludwig 
+  // by Marvin Ludwig 
   
   function maskLcl(image) {
   // Bit 0 - Fill
@@ -116,11 +121,11 @@ return(L);
 
 };
 
-//The following code has been produced by Laura Giese
+
 //function for building monthly medians
 
 var YMed = function(monthColl, from, to, month){
-
+// by Laura Giese
 
 // iterate over year list
   
